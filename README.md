@@ -136,9 +136,7 @@
 
 使用 `/oc-history` 可查看最近使用的10个工作目录。
 
-## 许可证
-
-MIT
+## 用例模拟
 
 <details>
 <summary>点击展开：插件交互用例模拟 (Use Cases)</summary>
