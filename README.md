@@ -1,6 +1,7 @@
 # AstrBot Plugin: OpenCode Bridge
 
-让 AstrBot 对接 [OpenCode](https://github.com/opencode-ai/opencode)，通过自然语言远程操控电脑。
+让 AstrBot 对接 [OpenCode](https://github.com/anomalyco/opencode)，通过自然语言远程操控电脑。
+本项目使用 OpenCode 构建。
 
 ## 功能特性
 
@@ -18,7 +19,7 @@
 
 ### 前置条件
 
-1. 安装 [OpenCode CLI](https://github.com/opencode-ai/opencode) 并确保终端可运行 `opencode` 命令
+1. 安装 [OpenCode CLI](https://opencode.ai) 并确保终端可运行 `opencode` 命令
 2. AstrBot v4.5.7 或更高版本
 
 ### 安装步骤
