@@ -29,7 +29,7 @@ from .core.output import OutputProcessor
     "astrbot_plugin_opencode",
     "singularity2000",
     "让 AstrBot 对接 OpenCode，通过自然语言远程指挥电脑干活。使用此插件，意味着你已知晓相关风险。",
-    "1.0.0",
+    "1.1.0",
     "https://github.com/singularity2000/astrbot_plugin_opencode",
 )
 class OpenCodePlugin(Star):
@@ -489,7 +489,7 @@ class OpenCodePlugin(Star):
             task_description(string): 详细的任务描述。保持原意，允许适当编辑以提升精准度，也可以不修改。此参数会被传送给 OpenCode 作为输入。
         """
         if not self.security.is_admin(event):
-            yield event.plain_result("权限不足。")
+            await event.send(event.plain_result("权限不足。"))
             return
 
         sender_id = event.get_sender_id()
@@ -499,10 +499,13 @@ class OpenCodePlugin(Star):
             event, session, task_description
         )
 
+        # 敏感操作需要用户确认
         if self.security.is_destructive(final_task):
             timeout = self.config.get("basic_config", {}).get("confirm_timeout", 30)
-            yield event.plain_result(
-                f"⚠️ AI 请求敏感操作：'{final_task}'\n回复'确认执行'批准 ({timeout}s)"
+            await event.send(
+                event.plain_result(
+                    f"⚠️ AI 请求敏感操作：'{final_task}'\n回复'确认执行'批准 ({timeout}s)"
+                )
             )
 
             user_choice = asyncio.Event()
@@ -523,20 +526,54 @@ class OpenCodePlugin(Star):
                 await tool_confirm(event)
                 await user_choice.wait()
             except TimeoutError:
-                yield event.plain_result("超时拒绝")
+                await event.send(event.plain_result("超时拒绝"))
                 return
 
             if not approved:
-                yield event.plain_result("拒绝执行")
+                await event.send(event.plain_result("拒绝执行"))
                 return
 
-            yield event.plain_result(f"🚀 执行中...\n📂 {session.work_dir}")
-            output = await self.executor.run_opencode(final_task, session)
-            res = await self.output_proc.parse_output(output, event, session)
-            yield event.chain_result(res)
-            return
+        # 发送"执行中"状态，然后在后台执行，避免框架 60s 超时
+        await event.send(event.plain_result(f"🚀 执行中...\n📂 {session.work_dir}"))
 
-        yield event.plain_result(f"🚀 执行中...\n📂 {session.work_dir}")
-        output = await self.executor.run_opencode(final_task, session)
-        result_chain = await self.output_proc.parse_output(output, event, session)
-        yield event.chain_result(result_chain)
+        # 保存主动推送所需的信息
+        umo = event.unified_msg_origin
+
+        # 启动后台任务执行 OpenCode
+        asyncio.create_task(
+            self._execute_opencode_background(umo, final_task, session, event)
+        )
+
+        # 不 yield 任何内容，框架会认为工具已自行处理，AI 不再额外回复
+
+    async def _execute_opencode_background(
+        self,
+        umo: str,
+        task: str,
+        session,
+        event: AstrMessageEvent,
+    ):
+        """后台执行 OpenCode 任务并主动推送结果"""
+        from astrbot.api.event import MessageChain
+
+        try:
+            output = await self.executor.run_opencode(task, session)
+            result_components = await self.output_proc.parse_output(
+                output, event, session
+            )
+
+            # parse_output 返回的是组件列表，需要逐个添加到 MessageChain
+            message_chain = MessageChain()
+            for comp in result_components:
+                message_chain.chain.append(comp)
+
+            # 主动推送执行结果
+            await self.context.send_message(umo, message_chain)
+        except Exception as e:
+            self.logger.error(f"OpenCode 后台执行失败: {e}")
+            try:
+                await self.context.send_message(
+                    umo, MessageChain().message(f"❌ OpenCode 执行失败: {e}")
+                )
+            except Exception as send_err:
+                self.logger.error(f"发送错误消息失败: {send_err}")
