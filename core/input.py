@@ -3,6 +3,8 @@
 """
 
 import asyncio
+import copy
+import mimetypes
 import os
 import time
 import aiohttp
@@ -13,6 +15,28 @@ from astrbot.api.message_components import Plain, Image, File, Reply
 
 from .session import OpenCodeSession
 from .utils import write_file_sync
+
+
+class ACPPromptPayload(str):
+    """兼容旧字符串调用方的 ACP prompt payload。"""
+
+    __slots__ = ("text", "content_blocks", "metadata")
+
+    def __new__(
+        cls, text: str, content_blocks: list[dict], metadata: dict | None = None
+    ):
+        obj = str.__new__(cls, text)
+        obj.text = text
+        obj.content_blocks = list(content_blocks)
+        obj.metadata = dict(metadata or {})
+        return obj
+
+    def to_payload(self) -> dict:
+        return {
+            "text": self.text,
+            "contentBlocks": copy.deepcopy(self.content_blocks),
+            **copy.deepcopy(self.metadata),
+        }
 
 
 class InputProcessor:
@@ -26,7 +50,7 @@ class InputProcessor:
         event: AstrMessageEvent,
         session: OpenCodeSession,
         raw_command_text: str = "",
-    ) -> str:
+    ) -> ACPPromptPayload:
         """
         统一处理输入消息：
         1. 扫描直接发送的图片/文件
@@ -38,6 +62,7 @@ class InputProcessor:
         os.makedirs(download_dir, exist_ok=True)
 
         final_prompt_parts = []
+        content_blocks: list[dict] = []
 
         # 兼容性处理：AstrBotMessage 组件列表属性名为 message (v4.13+)
         # 如果 message 属性不存在，尝试 content 作为回退
@@ -52,6 +77,7 @@ class InputProcessor:
             quote_chain = getattr(reply_component, "chain", []) or []
 
             quote_text_parts = []
+            quote_media_blocks: list[dict] = []
             for c in quote_chain:
                 if isinstance(c, Plain):
                     quote_text_parts.append(c.text)
@@ -59,10 +85,17 @@ class InputProcessor:
                     path = await self._download_resource(c, download_dir)
                     if path:
                         quote_text_parts.append(f" {path} ")
+                        quote_media_blocks.append(
+                            self._make_media_block(c, path, session)
+                        )
 
             full_quote_text = "".join(quote_text_parts).strip()
             if full_quote_text:
                 final_prompt_parts.append(f"[引用:{full_quote_text}]")
+                content_blocks.append(
+                    {"type": "text", "text": f"[引用:{full_quote_text}]"}
+                )
+            content_blocks.extend(quote_media_blocks)
 
         # --- 2. 处理当前消息中的文本和媒体 ---
         current_msg_parts = []
@@ -71,19 +104,62 @@ class InputProcessor:
                 path = await self._download_resource(c, download_dir)
                 if path:
                     current_msg_parts.append(f" {path} ")
+                    content_blocks.append(self._make_media_block(c, path, session))
             elif isinstance(c, Plain):
                 pass
 
         # 组装
         if raw_command_text:
             final_prompt_parts.append(raw_command_text)
+            content_blocks.append({"type": "text", "text": raw_command_text})
 
         if current_msg_parts:
             final_prompt_parts.append(" ".join(current_msg_parts))
 
-        return " ".join(final_prompt_parts).strip()
+        final_text = " ".join(final_prompt_parts).strip()
+        if not content_blocks and final_text:
+            content_blocks.append({"type": "text", "text": final_text})
 
-    async def _download_resource(self, component, save_dir: str) -> str:
+        return ACPPromptPayload(final_text, content_blocks)
+
+    def _make_media_block(
+        self, component, path: str, session: OpenCodeSession | None = None
+    ) -> dict:
+        mime_type = self._guess_mime_type(component, path)
+        if isinstance(component, Image) and self._supports_image_input(session):
+            return {
+                "type": "image",
+                "uri": path,
+                "mimeType": mime_type or "image/*",
+            }
+
+        if isinstance(component, Image):
+            return {"type": "text", "text": f"[图片: {path}]"}
+
+        return {
+            "type": "resource",
+            "uri": path,
+            "mimeType": mime_type or "application/octet-stream",
+            "name": os.path.basename(path),
+        }
+
+    def _supports_image_input(self, session: OpenCodeSession | None) -> bool:
+        capabilities = getattr(session, "session_capabilities", {}) or {}
+        for key in ("imageInput", "image_input", "supportsImageInput"):
+            if key in capabilities:
+                return bool(capabilities.get(key))
+        return False
+
+    def _guess_mime_type(self, component, path: str) -> str | None:
+        mime_type = getattr(component, "mime_type", None) or getattr(
+            component, "mimeType", None
+        )
+        if mime_type:
+            return str(mime_type)
+        guessed, _ = mimetypes.guess_type(path)
+        return guessed
+
+    async def _download_resource(self, component, save_dir: str) -> str | None:
         """下载 Image/File 组件资源"""
         url = getattr(component, "url", None)
         if not url:
@@ -104,8 +180,6 @@ class InputProcessor:
                             ext = os.path.splitext(orig_name)[1].lower()
                         else:
                             # 2. 尝试从 Content-Type 获取
-                            import mimetypes
-
                             ct = (
                                 resp.headers.get("Content-Type", "")
                                 .split(";")[0]

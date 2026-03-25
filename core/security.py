@@ -4,12 +4,20 @@
 
 import os
 import re
+from dataclasses import dataclass
 from typing import Optional, Callable
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
 from .session import OpenCodeSession
+
+
+@dataclass(slots=True)
+class PreflightDecision:
+    requires_confirmation: bool
+    reason: str = ""
+    relies_on_runtime_permission: bool = True
 
 
 class SecurityChecker:
@@ -38,13 +46,20 @@ class SecurityChecker:
 
     def is_destructive(self, task: str) -> bool:
         """检查任务是否包含敏感操作"""
+        return self.evaluate_preflight(task).requires_confirmation
+
+    def evaluate_preflight(self, task: str) -> PreflightDecision:
+        """前置安全门：负责提醒/确认，不替代 ACP 运行时权限控制。"""
         basic_cfg = self.config.get("basic_config", {})
 
         # 1. 检查配置中的黑名单正则
         destructive_keywords = basic_cfg.get("destructive_keywords", [])
-        task_lower = task.lower()
+        task_lower = str(task).lower()
         if any(re.search(kw, task_lower) for kw in destructive_keywords):
-            return True
+            return PreflightDecision(
+                requires_confirmation=True,
+                reason="destructive_keyword",
+            )
 
         # 2. 检查写操作安全开关
         if basic_cfg.get("confirm_all_write_ops", True):
@@ -61,9 +76,12 @@ class SecurityChecker:
                 r"update",
             ]
             if any(re.search(kw, task_lower) for kw in write_keywords):
-                return True
+                return PreflightDecision(
+                    requires_confirmation=True,
+                    reason="write_operation",
+                )
 
-        return False
+        return PreflightDecision(requires_confirmation=False)
 
     def is_path_safe(
         self, path: str, session: Optional[OpenCodeSession] = None

@@ -1,339 +1,828 @@
-"""
-命令执行模块
-"""
+"""ACP backend dispatcher for command execution."""
 
 import asyncio
-import json
-import locale
+import contextlib
 import os
 import shutil
-from typing import List, Optional, Tuple
-
-import httpx
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
 from astrbot.api import logger
 
+from .acp_adapter import OpenCodeACPAdapter
+from .acp_client import ACPClient
+from .acp_models import ACPError, ACPStartupError, ACPTimeoutError, ACPTransportError
+from .acp_transport_stdio import ACPStdioTransport
 from .session import OpenCodeSession
 
 
+@dataclass(slots=True)
+class ExecutionResult:
+    ok: bool
+    message: str = ""
+    error_type: Optional[str] = None
+    final_text: str = ""
+    stop_reason: Optional[str] = None
+    session_id: Optional[str] = None
+    payload: dict[str, Any] = field(default_factory=dict)
+    items: list[dict[str, Any]] = field(default_factory=list)
+    recovered_session: bool = False
+    session_recovery_failed: bool = False
+
+
+@dataclass(slots=True)
+class SessionEnsureResult:
+    ok: bool
+    error: Optional[ExecutionResult] = None
+    recovered_session: bool = False
+    session_recovery_failed: bool = False
+
+
 class CommandExecutor:
-    """命令执行器 - 负责执行 OpenCode 和 Shell 命令"""
+    """ACP-only executor that owns backend lifecycle and session dispatch."""
 
     def __init__(self, config: dict):
         self.config = config
         self.logger = logger
-        self._remote_client: Optional[httpx.AsyncClient] = None
+        self.adapter = OpenCodeACPAdapter()
+        self._client: Optional[ACPClient] = None
+        self._runtime_update_queues: dict[int, asyncio.Queue] = {}
+        self._active_runtime_sessions: dict[int, OpenCodeSession] = {}
 
     def _get_basic_config(self) -> dict:
         return self.config.get("basic_config", {})
 
-    def _get_connection_mode(self) -> str:
-        mode = self._get_basic_config().get("connection_mode", "local")
-        return str(mode).strip().lower() or "local"
-
-    def is_remote_mode(self) -> bool:
-        return self._get_connection_mode() == "remote"
-
-    async def _get_remote_client(self) -> httpx.AsyncClient:
-        if self._remote_client and not self._remote_client.is_closed:
-            return self._remote_client
-
+    def get_acp_launch_config(self) -> dict:
         basic_cfg = self._get_basic_config()
-        server_url = str(basic_cfg.get("remote_server_url", "")).strip()
-        if not server_url:
-            raise ValueError(
-                "未配置 remote_server_url。请在配置中填写 OpenCode Server 地址。"
-            )
+        acp_args = basic_cfg.get("acp_args", [])
+        if not isinstance(acp_args, list):
+            acp_args = []
 
-        timeout = int(basic_cfg.get("remote_timeout", 300))
-        username = str(basic_cfg.get("remote_username", "opencode")).strip()
-        password = str(basic_cfg.get("remote_password", ""))
-        auth = (username, password) if password else None
+        client_capabilities = basic_cfg.get("acp_client_capabilities", {})
+        if not isinstance(client_capabilities, dict):
+            client_capabilities = {}
 
-        self._remote_client = httpx.AsyncClient(
-            base_url=server_url.rstrip("/"),
-            auth=auth,
-            timeout=httpx.Timeout(timeout),
-        )
-        return self._remote_client
+        startup_timeout = basic_cfg.get("acp_startup_timeout", 0)
+        try:
+            startup_timeout = int(startup_timeout)
+        except (TypeError, ValueError):
+            startup_timeout = 0
+
+        return {
+            "backend_type": str(basic_cfg.get("backend_type", "")).strip(),
+            "acp_command": str(basic_cfg.get("acp_command", "")).strip(),
+            "acp_args": [str(arg) for arg in acp_args],
+            "acp_startup_timeout": startup_timeout,
+            "acp_client_capabilities": dict(client_capabilities),
+        }
+
+    def _resolve_command_path(self) -> Optional[str]:
+        command = self.get_acp_launch_config()["acp_command"]
+        if not command:
+            return None
+
+        resolved_path = shutil.which(command)
+        if resolved_path:
+            return resolved_path
+
+        return command
 
     async def close(self):
-        """释放执行器持有的外部资源"""
-        if self._remote_client and not self._remote_client.is_closed:
-            await self._remote_client.aclose()
+        client = self._client
+        self._client = None
+        if client and hasattr(client, "aclose"):
+            await client.aclose()
 
-    async def health_check(self) -> Tuple[bool, str]:
-        """执行运行模式健康检查"""
-        if not self.is_remote_mode():
-            return True, "local"
+    def get_protocol_capabilities(self) -> dict[str, Any]:
+        client = self._client
+        if client is None:
+            return {}
+        return dict(getattr(client, "protocol_capabilities", {}) or {})
 
-        try:
-            client = await self._get_remote_client()
-            resp = await client.get("/global/health")
-            resp.raise_for_status()
-            data = resp.json() if resp.content else {}
-            version = data.get("version", "unknown")
-            healthy = data.get("healthy", True)
-            return bool(healthy), f"remote(version={version})"
-        except Exception as e:
-            return False, f"remote(error={e})"
+    async def health_check(self) -> tuple[bool, str]:
+        launch_cfg = self.get_acp_launch_config()
+        backend_type = launch_cfg["backend_type"]
+        if not backend_type:
+            return False, "backend_type_missing"
+        if backend_type != "acp_opencode":
+            return False, f"unsupported_backend_type({backend_type})"
 
-    def _extract_remote_text(self, payload: dict) -> str:
-        parts = payload.get("parts", [])
-        texts = []
-        for part in parts:
-            if part.get("type") == "text":
-                text = part.get("text", "")
-                if text:
-                    texts.append(text)
-        return "\n".join(texts).strip()
+        command = launch_cfg["acp_command"]
+        if not command:
+            return False, "acp_command_missing"
 
-    async def _run_opencode_remote(self, message: str, session: OpenCodeSession) -> str:
-        client = await self._get_remote_client()
+        timeout = launch_cfg["acp_startup_timeout"]
+        if timeout <= 0:
+            return False, "acp_startup_timeout_invalid"
 
         try:
-            if not session.opencode_session_id:
-                create_resp = await client.post("/session", json={})
-                create_resp.raise_for_status()
-                created = create_resp.json()
-                session_id = str(created.get("id", "")).strip()
-                if not session_id:
-                    return "❌ 远程会话创建成功但未返回 session ID。"
-                session.set_opencode_session_id(session_id)
-                self.logger.info(f"Remote OpenCode session created: {session_id}")
+            await self._probe_backend_startup()
+        except (ACPStartupError, ACPTimeoutError, ACPTransportError, ACPError) as exc:
+            return False, self._format_initialize_error(exc)
 
-            body = {"parts": [{"type": "text", "text": message}]}
-            resp = await client.post(
-                f"/session/{session.opencode_session_id}/message", json=body
-            )
-            resp.raise_for_status()
-
-            payload = resp.json()
-            text = self._extract_remote_text(payload)
-            return text or "(远程服务无文本响应)"
-        except httpx.HTTPStatusError as e:
-            # 远程 session 失效时自动重建一次
-            if e.response.status_code == 404 and session.opencode_session_id:
-                self.logger.warning(
-                    f"Remote session {session.opencode_session_id} not found, recreating"
-                )
-                session.clear_opencode_session_id()
-                return await self._run_opencode_remote(message, session)
-            return f"❌ 远程请求失败: HTTP {e.response.status_code}"
-        except httpx.RequestError as e:
-            return f"❌ 远程网络错误: {e}"
-
-    def _parse_json_output(self, raw_output: str) -> Tuple[str, str]:
-        """解析 OpenCode JSON 格式输出
-
-        返回: (session_id, text_content)
-        """
-        session_id = None
-        text_parts = []
-
-        for line in raw_output.strip().split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                event = json.loads(line)
-                # 提取 session ID（从任意事件中）
-                if not session_id and "sessionID" in event:
-                    session_id = event["sessionID"]
-
-                # 只提取 text 类型事件的内容
-                if event.get("type") == "text":
-                    part = event.get("part", {})
-                    text = part.get("text", "")
-                    if text:
-                        text_parts.append(text)
-            except json.JSONDecodeError:
-                # 如果某行不是有效 JSON，跳过
-                continue
-
-        return session_id, "\n".join(text_parts)
-
-    async def run_opencode(self, message: str, session: OpenCodeSession) -> str:
-        """执行 OpenCode 命令，支持会话持久化"""
-        if self.is_remote_mode():
-            return await self._run_opencode_remote(message, session)
-
-        opencode_path = self.config.get("basic_config", {}).get(
-            "opencode_path", "opencode"
+        return (
+            True,
+            f"{backend_type}(command={command}, args={len(launch_cfg['acp_args'])}, timeout={timeout}, capabilities={len(launch_cfg['acp_client_capabilities'])})",
         )
 
-        # 自动探测绝对路径 (特别是针对 Windows npm 全局安装)
-        if opencode_path == "opencode":
-            resolved_path = shutil.which("opencode")
-            if resolved_path:
-                opencode_path = resolved_path
-            # Windows 特殊处理：npm 安装的通常是 .cmd
-            elif os.name == "nt":
-                resolved_path = shutil.which("opencode.cmd")
-                if resolved_path:
-                    opencode_path = resolved_path
-
-        # 构建命令参数
-        cmd_args = [opencode_path, "run", "--format", "json"]
-
-        # 如果已有 session ID，继续该会话
-        if session.opencode_session_id:
-            cmd_args.extend(["--session", session.opencode_session_id])
-
-        # 添加消息内容
-        cmd_args.append(message)
+    async def initialize_if_needed(
+        self, session: Optional[OpenCodeSession] = None
+    ) -> ExecutionResult:
+        client = self._get_or_create_client(session)
+        if client.initialized:
+            if session and getattr(client, "protocol_info", None):
+                session.protocol_version = client.protocol_info.get("protocolVersion")
+            return ExecutionResult(
+                ok=True, payload=dict(getattr(client, "protocol_info", {}))
+            )
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd_args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=session.env,
-                cwd=session.work_dir,
+            response = await client.initialize(
+                client_capabilities=self.get_acp_launch_config()[
+                    "acp_client_capabilities"
+                ],
+                client_info={"name": "astrbot_plugin_opencode"},
             )
-            stdout, stderr = await process.communicate()
-            raw_output = stdout.decode("utf-8", errors="ignore")
-            error_output = stderr.decode("utf-8", errors="ignore")
+        except (ACPStartupError, ACPTimeoutError, ACPTransportError, ACPError) as exc:
+            await self.close()
+            return ExecutionResult(
+                ok=False,
+                error_type="acp_initialize_failed",
+                message=self._format_initialize_error(exc),
+            )
 
-            if process.returncode != 0:
-                # 如果是 session 不存在导致的错误，清除 session ID 并重试
-                if session.opencode_session_id and "session" in error_output.lower():
-                    self.logger.warning(
-                        f"Session {session.opencode_session_id} 可能已失效，清除并重试"
-                    )
-                    session.clear_opencode_session_id()
-                    return await self.run_opencode(message, session)
-                return f"执行失败 (Return Code: {process.returncode})\n错误信息: {error_output}\n输出: {raw_output}"
+        if session:
+            session.protocol_version = response.get("protocolVersion")
+        return ExecutionResult(ok=True, payload=response)
 
-            # 解析 JSON 输出
-            new_session_id, text_content = self._parse_json_output(raw_output)
+    async def ensure_session(self, session: OpenCodeSession) -> ExecutionResult:
+        init_result = await self.initialize_if_needed(session)
+        if not init_result.ok:
+            return init_result
 
-            # 保存 session ID（仅在首次或更新时）
-            if new_session_id and new_session_id != session.opencode_session_id:
-                session.set_opencode_session_id(new_session_id)
-                self.logger.info(f"OpenCode session ID 已保存: {new_session_id}")
+        ensured = await self._ensure_session_ready(session)
+        if ensured.error:
+            return ensured.error
 
-            # 如果解析出文本内容，返回；否则返回原始输出
-            if text_content:
-                return text_content
-            else:
-                # 解析失败时回退到原始输出（去除 JSON 格式）
-                return raw_output
+        return ExecutionResult(
+            ok=True,
+            session_id=session.backend_session_id,
+            recovered_session=ensured.recovered_session,
+            session_recovery_failed=ensured.session_recovery_failed,
+        )
 
-        except FileNotFoundError:
-            return f"❌ 找不到 OpenCode 可执行文件: {opencode_path}\n请检查配置中的 opencode_path 是否正确。"
-        except PermissionError:
-            return f"❌ 没有权限执行 OpenCode: {opencode_path}"
-        except OSError as e:
-            return f"❌ 系统错误: {e}"
+    async def load_session(self, session: OpenCodeSession) -> ExecutionResult:
+        init_result = await self.initialize_if_needed(session)
+        if not init_result.ok:
+            return init_result
 
-    async def list_opencode_sessions(self, limit: int = 10) -> List[dict]:
-        """列出 OpenCode 的 session 列表"""
-        if self.is_remote_mode():
-            try:
-                client = await self._get_remote_client()
-                resp = await client.get("/session")
-                resp.raise_for_status()
-                payload = resp.json()
-                if not isinstance(payload, list):
-                    return []
-                normalized = []
-                for item in payload[:limit]:
-                    if not isinstance(item, dict):
-                        continue
-                    normalized.append(
+        ensured = await self._ensure_session_ready(
+            session, allow_recreate_after_load_failure=False
+        )
+        if ensured.error:
+            return ensured.error
+
+        return ExecutionResult(
+            ok=True,
+            session_id=session.backend_session_id,
+            recovered_session=ensured.recovered_session,
+            session_recovery_failed=ensured.session_recovery_failed,
+        )
+
+    async def prompt(
+        self,
+        session: OpenCodeSession,
+        prompt_payload: Optional[dict[str, Any]] = None,
+    ) -> ExecutionResult:
+        init_result = await self.initialize_if_needed(session)
+        if not init_result.ok:
+            return init_result
+
+        ensured = await self._ensure_session_ready(session)
+        if ensured.error:
+            return ensured.error
+
+        payload = self._coerce_prompt_payload(prompt_payload)
+        payload.setdefault("sessionId", session.backend_session_id)
+
+        try:
+            response = await self._get_or_create_client(session).prompt_session(payload)
+        except (ACPTransportError, ACPError) as exc:
+            return ExecutionResult(
+                ok=False,
+                error_type="acp_prompt_failed",
+                message=f"ACP prompt failed: {exc}",
+                session_id=session.backend_session_id,
+            )
+
+        self._apply_session_state(session, response)
+        stop_reason = self._extract_stop_reason(response)
+        final_text = self._extract_output_text(response)
+        session.prompt_running = False
+
+        if stop_reason == "cancelled":
+            return ExecutionResult(
+                ok=False,
+                error_type="cancelled",
+                message="🛑 本轮任务已取消",
+                final_text=final_text,
+                stop_reason=stop_reason,
+                session_id=session.backend_session_id,
+                payload=response,
+                recovered_session=ensured.recovered_session,
+                session_recovery_failed=ensured.session_recovery_failed,
+            )
+
+        return ExecutionResult(
+            ok=True,
+            final_text=final_text,
+            stop_reason=stop_reason,
+            session_id=session.backend_session_id,
+            payload=response,
+            recovered_session=ensured.recovered_session,
+            session_recovery_failed=ensured.session_recovery_failed,
+        )
+
+    async def run_prompt(
+        self,
+        prompt_payload: Optional[dict[str, Any]],
+        session: OpenCodeSession,
+    ) -> ExecutionResult:
+        return await self.prompt(session, self._coerce_prompt_payload(prompt_payload))
+
+    async def stream_prompt(self, prompt_payload: Any, session: OpenCodeSession):
+        async for item in self._stream_execution(
+            session,
+            lambda: self.run_prompt(prompt_payload, session),
+        ):
+            yield item
+
+    async def stream_permission_response(
+        self, session: OpenCodeSession, request_id: str, option_id: str
+    ):
+        async for item in self._stream_execution(
+            session,
+            lambda: self.respond_permission(session, request_id, option_id),
+        ):
+            yield item
+
+    async def run_opencode(
+        self, message: Any, session: OpenCodeSession
+    ) -> ExecutionResult:
+        return await self.run_prompt(self._coerce_prompt_payload(message), session)
+
+    async def cancel(self, session: OpenCodeSession) -> ExecutionResult:
+        init_result = await self.initialize_if_needed(session)
+        if not init_result.ok:
+            return init_result
+
+        payload = {}
+        if session.backend_session_id:
+            payload["sessionId"] = session.backend_session_id
+
+        try:
+            response = await self._get_or_create_client(session).cancel_session(payload)
+        except (ACPTransportError, ACPError) as exc:
+            return ExecutionResult(
+                ok=False,
+                error_type="acp_cancel_failed",
+                message=f"ACP cancel failed: {exc}",
+                session_id=session.backend_session_id,
+            )
+
+        session.prompt_running = False
+        session.pending_permission = None
+        return ExecutionResult(
+            ok=True,
+            stop_reason=self._extract_stop_reason(response),
+            session_id=session.backend_session_id,
+            payload=response,
+        )
+
+    async def respond_permission(
+        self, session: OpenCodeSession, request_id: str, option_id: str
+    ) -> ExecutionResult:
+        init_result = await self.initialize_if_needed(session)
+        if not init_result.ok:
+            return init_result
+
+        payload = {
+            "requestId": request_id,
+            "optionId": option_id,
+        }
+        if session.backend_session_id:
+            payload["sessionId"] = session.backend_session_id
+
+        try:
+            response = await self._get_or_create_client(session).respond_permission(
+                payload
+            )
+        except (ACPTransportError, ACPError) as exc:
+            return ExecutionResult(
+                ok=False,
+                error_type="acp_permission_response_failed",
+                message=f"ACP permission response failed: {exc}",
+                session_id=session.backend_session_id,
+            )
+
+        session.pending_permission = None
+        self._apply_session_state(session, response)
+        return ExecutionResult(
+            ok=True,
+            final_text=self._extract_output_text(response),
+            stop_reason=self._extract_stop_reason(response),
+            session_id=session.backend_session_id,
+            payload=response,
+        )
+
+    async def list_sessions(self, limit: int = 10) -> ExecutionResult:
+        init_result = await self.initialize_if_needed(None)
+        if not init_result.ok:
+            return init_result
+
+        try:
+            response = await self._get_or_create_client(None).list_sessions(
+                {"limit": limit}
+            )
+        except (ACPTransportError, ACPError) as exc:
+            return ExecutionResult(
+                ok=False,
+                error_type="acp_list_sessions_failed",
+                message=f"ACP session list failed: {exc}",
+            )
+
+        items = response.get("sessions") or response.get("items") or []
+        if not isinstance(items, list):
+            items = []
+        return ExecutionResult(ok=True, items=list(items), payload=response)
+
+    async def set_config_option(
+        self, session: OpenCodeSession, option_id: str, value: Any
+    ) -> ExecutionResult:
+        ensured = await self.ensure_session(session)
+        if not ensured.ok:
+            return ensured
+
+        payload = {
+            "sessionId": session.backend_session_id,
+            "optionId": option_id,
+            "value": value,
+        }
+        try:
+            response = await self._get_or_create_client(
+                session
+            ).set_session_config_option(payload)
+        except (ACPTransportError, ACPError) as exc:
+            return ExecutionResult(
+                ok=False,
+                error_type="acp_set_config_option_failed",
+                message=f"ACP set config option failed: {exc}",
+                session_id=session.backend_session_id,
+            )
+
+        self._apply_session_state(session, response)
+        return ExecutionResult(
+            ok=True, session_id=session.backend_session_id, payload=response
+        )
+
+    async def set_mode(self, session: OpenCodeSession, mode_id: str) -> ExecutionResult:
+        ensured = await self.ensure_session(session)
+        if not ensured.ok:
+            return ensured
+
+        payload = {"sessionId": session.backend_session_id, "modeId": mode_id}
+        try:
+            response = await self._get_or_create_client(session).set_session_mode(
+                payload
+            )
+        except (ACPTransportError, ACPError) as exc:
+            return ExecutionResult(
+                ok=False,
+                error_type="acp_set_mode_failed",
+                message=f"ACP set mode failed: {exc}",
+                session_id=session.backend_session_id,
+            )
+
+        self._apply_session_state(session, response)
+        return ExecutionResult(
+            ok=True, session_id=session.backend_session_id, payload=response
+        )
+
+    def _get_or_create_client(
+        self, session: Optional[OpenCodeSession] = None
+    ) -> ACPClient:
+        if self._client is None:
+            self._client = self._build_client(session)
+        self._ensure_notification_handler(self._client)
+        return self._client
+
+    def _build_client(self, session: Optional[OpenCodeSession]) -> ACPClient:
+        launch_cfg = self.get_acp_launch_config()
+        transport = ACPStdioTransport(
+            command=self._resolve_command_path() or launch_cfg["acp_command"],
+            args=launch_cfg["acp_args"],
+            env=dict(session.env) if session else dict(os.environ),
+            startup_timeout=launch_cfg["acp_startup_timeout"],
+        )
+        client = ACPClient(transport)
+        self._ensure_notification_handler(client)
+        return client
+
+    def _ensure_notification_handler(self, client: ACPClient) -> None:
+        if getattr(client, "_astrbot_runtime_updates_registered", False):
+            return
+        client.add_notification_handler(self._handle_client_notification)
+        setattr(client, "_astrbot_runtime_updates_registered", True)
+
+    async def _probe_backend_startup(self) -> None:
+        launch_cfg = self.get_acp_launch_config()
+        transport = ACPStdioTransport(
+            command=self._resolve_command_path() or launch_cfg["acp_command"],
+            args=launch_cfg["acp_args"],
+            env=dict(os.environ),
+            startup_timeout=launch_cfg["acp_startup_timeout"],
+        )
+        try:
+            await transport.start()
+        finally:
+            await transport.aclose()
+
+    async def _ensure_session_ready(
+        self,
+        session: OpenCodeSession,
+        allow_recreate_after_load_failure: bool = True,
+    ) -> SessionEnsureResult:
+        client = self._get_or_create_client(session)
+        load_supported = bool(
+            getattr(client, "protocol_capabilities", {}).get("loadSession")
+        )
+
+        if session.backend_session_id:
+            if load_supported:
+                try:
+                    response = await client.load_session(
                         {
-                            "id": str(item.get("id", "")),
-                            "title": item.get("title") or "无标题",
+                            "sessionId": session.backend_session_id,
+                            "cwd": session.work_dir,
                         }
                     )
-                return normalized
-            except Exception as e:
-                self.logger.error(f"列出远程 session 时出错: {e}")
-                return []
+                except (ACPTransportError, ACPError) as exc:
+                    stale_session_id = session.backend_session_id
+                    session.reset_live_session()
+                    self.logger.warning(
+                        f"ACP session recovery failed for {stale_session_id}: {exc}"
+                    )
+                    if not allow_recreate_after_load_failure:
+                        return SessionEnsureResult(
+                            ok=False,
+                            error=ExecutionResult(
+                                ok=False,
+                                error_type="acp_load_session_failed",
+                                message=f"ACP load session failed: {exc}",
+                                session_id=stale_session_id,
+                            ),
+                        )
+                    created = await self._create_session(session)
+                    created.recovered_session = False
+                    created.session_recovery_failed = True
+                    return SessionEnsureResult(
+                        ok=created.ok,
+                        error=None if created.ok else created,
+                        recovered_session=False,
+                        session_recovery_failed=created.ok,
+                    )
 
-        opencode_path = self.config.get("basic_config", {}).get(
-            "opencode_path", "opencode"
+                self._apply_session_state(session, response)
+                return SessionEnsureResult(ok=True, recovered_session=True)
+
+            session.reset_live_session()
+
+        created = await self._create_session(session)
+        if not created.ok:
+            return SessionEnsureResult(ok=False, error=created)
+        return SessionEnsureResult(ok=True)
+
+    async def _create_session(self, session: OpenCodeSession) -> ExecutionResult:
+        payload: dict[str, Any] = {"cwd": session.work_dir}
+        if session.default_agent:
+            payload["agent"] = session.default_agent
+        if session.default_mode:
+            payload["mode"] = session.default_mode
+        if session.default_config_options:
+            payload["config"] = dict(session.default_config_options)
+
+        try:
+            response = await self._get_or_create_client(session).new_session(payload)
+        except (ACPTransportError, ACPError) as exc:
+            return ExecutionResult(
+                ok=False,
+                error_type="acp_session_new_failed",
+                message=f"ACP session creation failed: {exc}",
+            )
+
+        self._apply_session_state(session, response)
+        return ExecutionResult(
+            ok=True, session_id=session.backend_session_id, payload=response
         )
 
-        if opencode_path == "opencode":
-            resolved_path = shutil.which("opencode")
-            if resolved_path:
-                opencode_path = resolved_path
-            elif os.name == "nt":
-                resolved_path = shutil.which("opencode.cmd")
-                if resolved_path:
-                    opencode_path = resolved_path
+    def _apply_session_state(
+        self, session: OpenCodeSession, payload: Optional[dict[str, Any]]
+    ) -> None:
+        payload = dict(payload or {})
+        if not payload:
+            return
 
-        cmd_args = [
-            opencode_path,
-            "session",
-            "list",
-            "-n",
-            str(limit),
-            "--format",
-            "json",
-        ]
+        normalized = self.adapter.normalize_session_state(payload)
+        if normalized.session_id:
+            session.backend_session_id = normalized.session_id
+        if "agent" in payload:
+            session.agent_name = normalized.agent.name if normalized.agent else None
+            session.agent_title = normalized.agent.title if normalized.agent else None
+        if any(key in payload for key in ("availableAgents", "agents")):
+            session.available_agents = self._extract_available_agents(payload)
+        if any(
+            key in payload
+            for key in ("mode", "configOptions", "currentConfigValues", "modes")
+        ):
+            session.current_mode_id = normalized.mode.current_mode_id
+        if "configOptions" in payload:
+            session.config_options = [
+                self._config_option_to_dict(item) for item in normalized.config_options
+            ]
+        if "currentConfigValues" in payload:
+            session.current_config_values = dict(normalized.current_config_values)
+        if "modes" in payload:
+            session.available_modes = [dict(item) for item in normalized.mode.raw_modes]
+        if "availableCommands" in payload:
+            session.available_commands = [
+                self._command_to_dict(item) for item in normalized.commands
+            ]
+        if "capabilities" in payload:
+            session.session_capabilities = dict(normalized.capabilities)
 
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd_args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await process.communicate()
-            raw_output = stdout.decode("utf-8", errors="ignore")
+    def _config_option_to_dict(self, option) -> dict[str, Any]:
+        return {
+            "id": option.option_id,
+            "name": option.label,
+            "category": option.category,
+            "value": option.value,
+            "description": option.description,
+            **dict(option.raw),
+        }
 
-            if process.returncode != 0:
-                self.logger.error(
-                    f"列出 session 失败: {stderr.decode('utf-8', errors='ignore')}"
-                )
-                return []
+    def _command_to_dict(self, command) -> dict[str, Any]:
+        return {
+            "name": command.name,
+            "title": command.title,
+            "supported": command.supported,
+            "description": command.description,
+            **dict(command.raw),
+        }
 
-            return json.loads(raw_output)
-        except Exception as e:
-            self.logger.error(f"列出 session 时出错: {e}")
+    def _extract_available_agents(
+        self, payload: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        agents = payload.get("availableAgents") or payload.get("agents") or []
+        if not isinstance(agents, list):
             return []
 
-    async def exec_shell_cmd(self, cmd: str) -> str:
-        """执行 Shell 命令"""
-        if self.is_remote_mode():
-            return "❌ 当前为服务器远程模式，已禁用 /oc-shell。本地 Shell 仅在本地模式可用。"
+        normalized = []
+        seen = set()
+        for item in agents:
+            if isinstance(item, str):
+                name = item.strip()
+                title = ""
+            elif isinstance(item, dict):
+                name = str(item.get("name") or item.get("id") or "").strip()
+                title = str(item.get("title") or item.get("label") or "").strip()
+            else:
+                continue
+
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            normalized.append({"name": name, "title": title})
+        return normalized
+
+    def _extract_stop_reason(self, payload: dict[str, Any]) -> Optional[str]:
+        for key in ("stopReason", "stop_reason"):
+            value = payload.get(key)
+            if value is not None:
+                return str(value)
+        return None
+
+    def _extract_output_text(self, payload: dict[str, Any]) -> str:
+        for key in ("outputText", "finalText", "text"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                return value
+
+        blocks = payload.get("contentBlocks") or payload.get("parts") or []
+        if not isinstance(blocks, list):
+            return ""
+
+        texts = []
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") != "text":
+                continue
+            text = block.get("text")
+            if isinstance(text, str) and text:
+                texts.append(text)
+        return "\n".join(texts)
+
+    def _coerce_prompt_payload(self, prompt_input: Any) -> dict[str, Any]:
+        if hasattr(prompt_input, "to_payload") and callable(prompt_input.to_payload):
+            payload = prompt_input.to_payload()
+            if isinstance(payload, dict):
+                return dict(payload)
+
+        if isinstance(prompt_input, dict):
+            return dict(prompt_input)
+
+        text = "" if prompt_input is None else str(prompt_input)
+        return {"contentBlocks": [{"type": "text", "text": text}]}
+
+    async def _stream_execution(self, session: OpenCodeSession, request_factory):
+        session_key = id(session)
+        queue = self._runtime_update_queues.setdefault(session_key, asyncio.Queue())
+        self._active_runtime_sessions[session_key] = session
+        task = asyncio.create_task(request_factory())
 
         try:
-            # 默认超时 60 秒，防止死循环
-            process = await asyncio.create_subprocess_shell(
-                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=60
+            while True:
+                queue_task = asyncio.create_task(queue.get())
+                done, pending = await asyncio.wait(
+                    {task, queue_task}, return_when=asyncio.FIRST_COMPLETED
                 )
-            except asyncio.TimeoutError:
-                try:
-                    process.kill()
-                except Exception:
-                    pass
-                return "❌ 执行超时 (60s)"
 
-            # 使用系统默认编码解码（Windows中文版=GBK, 英文版=CP1252, Linux=UTF-8等）
-            encoding = locale.getpreferredencoding(False)
-            output = stdout.decode(encoding, errors="replace").strip()
-            error = stderr.decode(encoding, errors="replace").strip()
+                if queue_task in done:
+                    yield {"kind": "event", "event": queue_task.result()}
+                else:
+                    queue_task.cancel()
 
-            resp = []
-            if output:
-                resp.append(f"输出:\n{output}")
-            if error:
-                resp.append(f"错误:\n{error}")
-            if not resp:
-                resp.append("执行完成，无输出。")
+                for pending_task in pending:
+                    pending_task.cancel()
 
-            resp.append(f"\n(Return Code: {process.returncode})")
-            return "\n".join(resp)
-        except FileNotFoundError as e:
-            return f"❌ 命令不存在: {e}"
-        except PermissionError as e:
-            return f"❌ 权限不足: {e}"
-        except OSError as e:
-            return f"❌ 系统错误: {e}"
+                if task in done:
+                    while not queue.empty():
+                        yield {"kind": "event", "event": queue.get_nowait()}
+                    yield {"kind": "result", "result": task.result()}
+                    break
+        finally:
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            self._active_runtime_sessions.pop(session_key, None)
+            self._runtime_update_queues.pop(session_key, None)
+
+    async def _handle_client_notification(
+        self, method: str, params: Optional[dict[str, Any]] = None
+    ) -> None:
+        event = self._normalize_runtime_event(method, params)
+        if not event:
+            return
+
+        for session in self._resolve_runtime_sessions(event):
+            self._apply_runtime_session_update(session, event)
+            queue = self._runtime_update_queues.get(id(session))
+            if queue is not None:
+                queue.put_nowait(dict(event))
+
+    def _normalize_runtime_event(
+        self, method: str, params: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        payload = dict(params or {})
+        if not payload and not method:
+            return {}
+
+        normalized_method = str(method or "").strip().replace(".", "/")
+        event_type = str(payload.get("type") or payload.get("event_type") or "").strip()
+        if not event_type:
+            if (
+                payload.get("permission")
+                or normalized_method == "session/request_permission"
+            ):
+                event_type = "permission_requested"
+            else:
+                event_type = method.replace("/", "_").replace(".", "_")
+
+        event = dict(payload)
+        event["type"] = event_type
+
+        permission_payload = payload.get("permission")
+        if event_type == "permission_requested" and isinstance(
+            permission_payload, dict
+        ):
+            event = self._normalize_permission_event(permission_payload, event)
+            event["type"] = "permission_requested"
+        elif event_type == "permission_requested":
+            event = self._normalize_permission_event(payload, event)
+
+        return event
+
+    def _normalize_permission_event(
+        self, payload: dict[str, Any], fallback: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        event = dict(fallback or {})
+        event.update(dict(payload or {}))
+
+        request_id = (
+            event.get("requestId") or event.get("request_id") or event.get("id")
+        )
+        session_id = event.get("sessionId") or event.get("session_id")
+        tool_name = event.get("tool_name") or event.get("toolName")
+        tool_kind = event.get("tool_kind") or event.get("toolKind") or event.get("kind")
+        arguments = event.get("arguments")
+        options = event.get("options")
+
+        if not tool_name or not request_id:
+            normalized = self.adapter.normalize_permission_request(payload)
+            request_id = request_id or normalized.request_id
+            session_id = session_id or normalized.session_id
+            tool_name = tool_name or normalized.tool_name
+            tool_kind = tool_kind or normalized.tool_kind
+            if not isinstance(arguments, dict):
+                arguments = dict(normalized.arguments)
+            if not isinstance(options, list) or not options:
+                options = [
+                    {"optionId": item.option_id, "label": item.label, **dict(item.raw)}
+                    for item in normalized.options
+                ]
+
+        event["requestId"] = request_id
+        if session_id is not None:
+            event["sessionId"] = session_id
+        event["tool_name"] = tool_name or "未知工具"
+        event["tool_kind"] = tool_kind or ""
+        event["arguments"] = dict(arguments or {})
+        normalized_options = []
+        for option in options or []:
+            if not isinstance(option, dict):
+                continue
+            normalized_option = dict(option)
+            if "optionId" not in normalized_option and "id" in normalized_option:
+                normalized_option["optionId"] = normalized_option.get("id")
+            if "label" not in normalized_option and "name" in normalized_option:
+                normalized_option["label"] = normalized_option.get("name")
+            normalized_options.append(normalized_option)
+        event["options"] = normalized_options
+        return event
+
+    def _resolve_runtime_sessions(
+        self, event: Optional[dict[str, Any]] = None
+    ) -> list[OpenCodeSession]:
+        session_id = None
+        if isinstance(event, dict):
+            session_id = event.get("sessionId") or event.get("session_id")
+
+        if session_id is not None:
+            matched = [
+                session
+                for session in self._active_runtime_sessions.values()
+                if session.backend_session_id == str(session_id)
+            ]
+            if matched:
+                return matched
+
+        if len(self._active_runtime_sessions) == 1:
+            return list(self._active_runtime_sessions.values())
+
+        return []
+
+    def _apply_runtime_session_update(
+        self, session: OpenCodeSession, event: dict[str, Any]
+    ) -> None:
+        session_payload_keys = {
+            "sessionId",
+            "id",
+            "agent",
+            "mode",
+            "configOptions",
+            "currentConfigValues",
+            "modes",
+            "availableCommands",
+            "capabilities",
+        }
+        if any(key in event for key in session_payload_keys):
+            self._apply_session_state(session, event)
+
+    def _format_initialize_error(self, exc: BaseException) -> str:
+        launch_cfg = self.get_acp_launch_config()
+        command = (
+            launch_cfg["acp_command"] or self._resolve_command_path() or "<unknown>"
+        )
+        if isinstance(exc, ACPStartupError):
+            detail = f"ACP 后端启动失败: {command}"
+            if exc.exit_code is not None:
+                detail += f" (exit={exc.exit_code})"
+            if exc.stderr_text:
+                detail += f"\n{exc.stderr_text.strip()}"
+            elif exc.message:
+                detail += f"\n{exc.message}"
+            return detail
+        if isinstance(exc, ACPTimeoutError):
+            return f"ACP 后端启动失败: {command}\n{exc.message}"
+        return f"ACP 后端启动失败: {command}\n{exc}"

@@ -7,7 +7,7 @@ import os
 import re
 import shlex
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pathlib import Path
 
@@ -61,51 +61,320 @@ class OpenCodePlugin(Star):
         self.security.set_load_history_callback(self.storage_mgr.load_workdir_history)
 
     def _render_exec_status(self, session) -> str:
-        """根据运行模式渲染执行中提示"""
-        if self.executor.is_remote_mode():
-            return f"🚀 执行中... (服务器远程模式)\n📦 本地缓存目录: {session.work_dir}"
-        return f"🚀 执行中... (本地模式)\n📂 工作目录: {session.work_dir}"
+        """渲染执行中提示"""
+        lines = ["🚀 执行中...", f"📂 工作目录: {session.work_dir}"]
+        lines.extend(self._render_live_state_lines(session, include_defaults=True))
+        return "\n".join(lines)
 
-    def _find_local_path_refs(self, text: str) -> list[str]:
-        """从文本中提取疑似本地路径引用（用于 remote 模式保护）"""
-        if not text:
-            return []
-
-        findings = []
-        patterns = [
-            r"[A-Za-z]:\\[^\s\"']+",  # Windows 绝对路径
-            r"/(?:[^\s\"']+/)+[^\s\"']*",  # Unix 风格绝对路径
+    def _render_live_state_lines(
+        self, session, include_defaults: bool = False
+    ) -> list[str]:
+        agent_text = session.agent_name or "未提供"
+        mode_text = session.current_mode_id or "未提供"
+        config_values = session.current_config_values or {}
+        config_text = (
+            ", ".join(f"{key}={value}" for key, value in sorted(config_values.items()))
+            if config_values
+            else "无"
+        )
+        lines = [
+            f"🤖 当前 agent: {agent_text}",
+            f"🎛️ 当前 mode: {mode_text}",
+            f"⚙️ 当前配置: {config_text}",
         ]
+        if include_defaults:
+            lines.extend(
+                [
+                    f"🧭 默认 agent: {session.default_agent or '未设置'}",
+                    f"🪄 默认 mode: {session.default_mode or '未设置'}",
+                ]
+            )
+        if session.backend_session_id:
+            lines.append(f"🔗 当前会话: {session.backend_session_id}")
+        else:
+            lines.append("🔗 当前会话: 未绑定（下次 /oc 会创建新会话）")
+        return lines
 
-        for pattern in patterns:
-            for match in re.findall(pattern, text):
-                findings.append(match)
+    def _get_mode_options(self, session) -> tuple[str, list[dict[str, Any]]]:
+        config_mode_options = [
+            item
+            for item in (session.config_options or [])
+            if str(item.get("category") or "").strip() == "mode"
+        ]
+        if config_mode_options:
+            return "configOptions", config_mode_options
+        if session.available_modes:
+            return "modes", list(session.available_modes)
+        return "none", []
 
-        # downloaded 目录是此插件最常见的本地资源路径
-        if "downloaded" in text.lower():
-            findings.append("<downloaded-resource>")
+    def _resolve_mode_selection(
+        self, session, mode_value: str
+    ) -> tuple[str, Optional[dict[str, Any]]]:
+        source, options = self._get_mode_options(session)
+        normalized_value = mode_value.strip().lower()
+        for item in options:
+            candidates = [
+                str(item.get("id") or "").strip().lower(),
+                str(item.get("name") or item.get("label") or "").strip().lower(),
+                str(item.get("value") or "").strip().lower(),
+            ]
+            if normalized_value in {candidate for candidate in candidates if candidate}:
+                return source, item
+        return source, None
 
-        # 去重并限制长度，避免提示过长
-        deduped = []
-        for item in findings:
-            if item not in deduped:
-                deduped.append(item)
-        return deduped[:3]
+    def _collect_available_agents(self, session) -> list[str]:
+        values = []
+        for item in session.available_agents or []:
+            if isinstance(item, dict):
+                text = str(item.get("name") or item.get("title") or "").strip()
+            else:
+                text = str(item or "").strip()
+            if text and text not in values:
+                values.append(text)
+        for item in [
+            session.agent_name,
+            session.default_agent,
+            self.config.get("basic_config", {}).get("default_agent"),
+        ]:
+            text = str(item or "").strip()
+            if text and text not in values:
+                values.append(text)
+        return values
 
-    def _remote_input_guard_message(self, local_refs: list[str]) -> str:
-        refs = (
-            "\n".join([f"- {r}" for r in local_refs])
-            if local_refs
-            else "- (未识别具体路径)"
-        )
-        return (
-            "⚠️ 当前为服务器远程模式，检测到本地路径/本地缓存资源引用，远端 OpenCode 无法直接访问这些文件。\n\n"
-            f"检测到的本地引用：\n{refs}\n\n"
-            "建议：\n"
-            "1. 改为纯文本描述任务；\n"
-            "2. 先把文件放到远端服务器可访问路径后再让 OpenCode 处理；\n"
-            "3. 需要直接操作本机文件时，请将 connection_mode 切换为 local。"
-        )
+    def _render_agent_overview(self, session) -> str:
+        available_agents = self._collect_available_agents(session)
+        lines = ["🤖 Agent 状态"]
+        lines.extend(self._render_live_state_lines(session, include_defaults=True))
+        if available_agents:
+            lines.append(f"📚 可选 agent: {', '.join(available_agents)}")
+        else:
+            lines.append("📚 可选 agent: 当前后端未提供，先展示已知偏好")
+        return "\n".join(lines)
+
+    def _render_mode_overview(self, session) -> str:
+        source, options = self._get_mode_options(session)
+        lines = ["🎛️ Mode 状态"]
+        lines.extend(self._render_live_state_lines(session, include_defaults=True))
+        if source == "none":
+            lines.append("📚 当前后端未暴露可切换 mode")
+            return "\n".join(lines)
+
+        prefix = "configOptions" if source == "configOptions" else "modes"
+        lines.append(f"📚 可切换来源: {prefix}")
+        for item in options:
+            label = item.get("name") or item.get("label") or item.get("id") or "未命名"
+            value = item.get("value")
+            if value is not None and str(value).strip():
+                lines.append(f"- {label} ({value})")
+            else:
+                lines.append(f"- {label}")
+        return "\n".join(lines)
+
+    def _normalize_backend_sessions(
+        self, items: list[dict[str, Any]]
+    ) -> list[dict[str, str]]:
+        normalized = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            session_id = item.get("id") or item.get("sessionId")
+            if not session_id:
+                continue
+            normalized.append(
+                {
+                    "id": str(session_id),
+                    "title": str(item.get("title") or "无标题"),
+                }
+            )
+        return normalized
+
+    def _match_backend_session(
+        self, sessions: list[dict[str, str]], query: str
+    ) -> Optional[dict[str, str]]:
+        if query.isdigit():
+            index = int(query)
+            if 1 <= index <= len(sessions):
+                return sessions[index - 1]
+        for item in sessions:
+            if item["id"] == query:
+                return item
+        query_lower = query.lower()
+        for item in sessions:
+            if query_lower in item["title"].lower():
+                return item
+        return None
+
+    def _extract_permission_update(self, output, session) -> Optional[str]:
+        events = []
+        if hasattr(self.output_proc, "_extract_embedded_events"):
+            events = self.output_proc._extract_embedded_events(output)
+        if not events or not hasattr(self.output_proc, "build_chat_updates"):
+            return None
+        updates = self.output_proc.build_chat_updates(events, session=session)
+        if session.pending_permission:
+            for item in reversed(updates):
+                if "权限确认" in item:
+                    return item
+        return None
+
+    def _map_permission_reply(self, reply_text: str, permission: dict) -> Optional[str]:
+        text = (reply_text or "").strip()
+        if not text:
+            return None
+        options = permission.get("options") or []
+        if text.isdigit():
+            index = int(text)
+            if 1 <= index <= len(options):
+                return str(options[index - 1].get("optionId") or "") or None
+
+        alias_map = {
+            "允许一次": "allow_once",
+            "始终允许": "allow_always",
+            "拒绝": "reject_once",
+            "拒绝一次": "reject_once",
+            "始终拒绝": "reject_always",
+            "取消": "cancelled",
+        }
+        if text in alias_map:
+            return alias_map[text]
+
+        lowered = text.lower()
+        for item in options:
+            option_id = str(item.get("optionId") or "").strip()
+            label = str(item.get("label") or item.get("display") or "").strip()
+            if lowered in {option_id.lower(), label.lower()}:
+                return option_id or None
+        return None
+
+    async def _wait_for_permission_choice(self, event, session) -> tuple[str, bool]:
+        permission = dict(session.pending_permission or {})
+        timeout = self.config.get("basic_config", {}).get("confirm_timeout", 30)
+        completed = asyncio.Event()
+        selected = {"option": ""}
+
+        @session_waiter(timeout=timeout)
+        async def wait_permission(c: SessionController, e: AstrMessageEvent):
+            option_id = self._map_permission_reply(e.message_str, permission)
+            if not option_id:
+                return
+            selected["option"] = option_id
+            completed.set()
+            c.stop()
+
+        try:
+            await wait_permission(event)
+            await completed.wait()
+            return str(selected["option"]), False
+        except TimeoutError:
+            return "cancelled", True
+
+    async def _run_oc_prompt(
+        self,
+        event: AstrMessageEvent,
+        session,
+        prompt_payload: Any,
+        emit_status: bool = True,
+    ):
+        if emit_status:
+            yield event.plain_result(self._render_exec_status(session))
+
+        output = None
+        stream = None
+        used_live_stream = False
+
+        if hasattr(self.executor, "stream_prompt"):
+            stream = self.executor.stream_prompt(prompt_payload, session)
+            used_live_stream = True
+
+        while stream is not None:
+            next_stream = None
+            async for item in stream:
+                if not isinstance(item, dict):
+                    continue
+
+                kind = str(item.get("kind") or "").strip()
+                if kind == "event":
+                    updates = []
+                    if hasattr(self.output_proc, "build_chat_updates"):
+                        updates = self.output_proc.build_chat_updates(
+                            [item.get("event") or {}], session=session
+                        )
+                    for update in updates:
+                        if update:
+                            yield event.plain_result(update)
+
+                    if session.pending_permission:
+                        permission = dict(session.pending_permission or {})
+                        option_id, timed_out = await self._wait_for_permission_choice(
+                            event, session
+                        )
+                        if timed_out:
+                            yield event.plain_result("⏱️ 已因超时取消本次授权请求")
+                        if hasattr(self.executor, "stream_permission_response"):
+                            next_stream = self.executor.stream_permission_response(
+                                session,
+                                request_id=str(permission.get("requestId") or ""),
+                                option_id=option_id,
+                            )
+                        else:
+                            output = await self.executor.respond_permission(
+                                session,
+                                request_id=str(permission.get("requestId") or ""),
+                                option_id=option_id,
+                            )
+                        break
+                    continue
+
+                if kind == "result":
+                    output = item.get("result")
+                    break
+
+            if output is not None:
+                break
+            stream = next_stream
+
+        if output is None:
+            output = await self.executor.run_prompt(prompt_payload, session)
+
+        while True:
+            permission_message = self._extract_permission_update(output, session)
+            if not permission_message or not session.pending_permission:
+                break
+
+            yield event.plain_result(permission_message)
+            option_id, timed_out = await self._wait_for_permission_choice(
+                event, session
+            )
+            if timed_out:
+                yield event.plain_result("⏱️ 已因超时取消本次授权请求")
+            output = await self.executor.respond_permission(
+                session,
+                request_id=str(session.pending_permission.get("requestId") or ""),
+                option_id=option_id,
+            )
+
+        if used_live_stream:
+            payload = getattr(output, "payload", None)
+            if isinstance(payload, dict):
+                for key in ("events", "updates", "items"):
+                    payload.pop(key, None)
+
+        send_plan = await self.output_proc.parse_output_plan(output, event, session)
+        for idx, components in enumerate(send_plan):
+            if idx > 0:
+                await asyncio.sleep(self.output_proc.next_send_delay())
+            yield event.chain_result(components)
+
+    async def _prepare_history_session_bind(self, session) -> tuple[bool, str]:
+        init_result = await self.executor.initialize_if_needed(session)
+        if not init_result.ok:
+            return False, f"❌ 初始化 ACP backend 失败：{init_result.message}"
+
+        capabilities = self.executor.get_protocol_capabilities()
+        if not capabilities.get("loadSession"):
+            return False, "⚠️ 当前 backend 不支持恢复历史会话，无法绑定该 session。"
+
+        return True, ""
 
     def _get_send_page_size(self) -> int:
         return 50
@@ -367,7 +636,7 @@ class OpenCodePlugin(Star):
 
         # 运行模式健康检查
         ok, detail = await self.executor.health_check()
-        mode_text = "服务器远程模式" if self.executor.is_remote_mode() else "本地模式"
+        mode_text = "ACP 后端"
         if ok:
             self.logger.info(
                 f"OpenCode Plugin initialized. mode={mode_text}, detail={detail}"
@@ -409,12 +678,6 @@ class OpenCodePlugin(Star):
             yield event.plain_result("请输入任务、发送图片或引用消息。")
             return
 
-        if self.executor.is_remote_mode():
-            local_refs = self._find_local_path_refs(final_message)
-            if local_refs:
-                yield event.plain_result(self._remote_input_guard_message(local_refs))
-                return
-
         # 获取超时配置
         timeout = self.config.get("basic_config", {}).get("confirm_timeout", 30)
 
@@ -448,96 +711,101 @@ class OpenCodePlugin(Star):
                 yield event.plain_result("已取消")
                 return
 
-            yield event.plain_result(self._render_exec_status(session))
-            output = await self.executor.run_opencode(final_message, session)
-            send_plan = await self.output_proc.parse_output_plan(output, event, session)
-            for idx, components in enumerate(send_plan):
-                if idx > 0:
-                    await asyncio.sleep(self.output_proc.next_send_delay())
-                yield event.chain_result(components)
+            async for result in self._run_oc_prompt(event, session, final_message):
+                yield result
             return
 
-        yield event.plain_result(self._render_exec_status(session))
-        output = await self.executor.run_opencode(final_message, session)
-        send_plan = await self.output_proc.parse_output_plan(output, event, session)
-        for idx, components in enumerate(send_plan):
-            if idx > 0:
-                await asyncio.sleep(self.output_proc.next_send_delay())
-            yield event.chain_result(components)
+        async for result in self._run_oc_prompt(event, session, final_message):
+            yield result
 
-    @filter.command("oc-shell")
-    async def oc_shell(self, event: AstrMessageEvent, cmd: str = ""):
-        """执行原生 Shell 命令。用法：/oc-shell [命令]"""
+    @filter.command("oc-agent")
+    async def oc_agent(self, event: AstrMessageEvent, agent_name: str = ""):
+        """查看或设置默认 agent。用法：/oc-agent [名称]"""
         if not self.security.is_admin(event):
             yield event.plain_result("权限不足。")
             return
 
-        command = event.message_str.strip()
-        parts = command.split(" ", 1)
-        actual_cmd = parts[1].strip() if len(parts) > 1 else ""
+        session = self.session_mgr.get_or_create_session(event.get_sender_id())
+        agent_name = agent_name.strip()
 
-        if not actual_cmd:
-            yield event.plain_result("请输入要执行的 Shell 命令。")
+        if not agent_name:
+            yield event.plain_result(self._render_agent_overview(session))
             return
 
-        if self.executor.is_remote_mode():
+        session.default_agent = agent_name
+        yield event.plain_result(
+            "✅ 已更新默认 agent。\n"
+            f"🧭 下次新会话默认使用: {session.default_agent}\n"
+            f"🤖 当前 live agent 保持: {session.agent_name or '未提供'}\n"
+            f"📚 可选 agent: {', '.join(self._collect_available_agents(session)) or '当前后端未提供'}"
+        )
+
+    @filter.command("oc-mode")
+    async def oc_mode(self, event: AstrMessageEvent, mode_value: str = ""):
+        """查看或设置当前 mode。用法：/oc-mode [值]"""
+        if not self.security.is_admin(event):
+            yield event.plain_result("权限不足。")
+            return
+
+        session = self.session_mgr.get_or_create_session(event.get_sender_id())
+        mode_value = mode_value.strip()
+
+        if not mode_value:
+            yield event.plain_result(self._render_mode_overview(session))
+            return
+
+        source, selected = self._resolve_mode_selection(session, mode_value)
+        if source == "none":
+            session.default_mode = mode_value
             yield event.plain_result(
-                "❌ 当前为服务器远程模式，已禁用 /oc-shell。本地 Shell 仅在本地模式可用。"
+                f"✅ 已更新默认 mode: {mode_value}\n📚 当前 backend 未暴露可切换 mode"
             )
             return
 
-        timeout = self.config.get("basic_config", {}).get("confirm_timeout", 30)
-
-        if self.security.is_destructive(actual_cmd):
+        if not selected:
             yield event.plain_result(
-                f"⚠️ Shell 敏感操作确认：'{actual_cmd}'\n回复'确认'继续，其他取消 ({timeout}s)"
+                f"❌ 未找到可用 mode：{mode_value}\n{self._render_mode_overview(session)}"
             )
-
-            user_choice = asyncio.Event()
-            approved = False
-
-            @session_waiter(timeout=timeout)
-            async def confirm_shell(c: SessionController, e: AstrMessageEvent):
-                nonlocal approved
-                if e.message_str == "确认":
-                    approved = True
-                    user_choice.set()
-                    c.stop()
-                else:
-                    user_choice.set()
-                    c.stop()
-
-            try:
-                await confirm_shell(event)
-                await user_choice.wait()
-            except TimeoutError:
-                yield event.plain_result("超时取消")
-                return
-
-            if not approved:
-                yield event.plain_result("已取消")
-                return
-
-            yield event.plain_result(f"🚀 Shell 执行中: {actual_cmd}")
-            result = await self.executor.exec_shell_cmd(actual_cmd)
-            sender_id = event.get_sender_id()
-            session = self.session_mgr.get_or_create_session(sender_id)
-            send_plan = await self.output_proc.parse_output_plan(result, event, session)
-            for idx, components in enumerate(send_plan):
-                if idx > 0:
-                    await asyncio.sleep(self.output_proc.next_send_delay())
-                yield event.chain_result(components)
             return
 
-        yield event.plain_result(f"🚀 Shell 执行中: {actual_cmd}")
-        result = await self.executor.exec_shell_cmd(actual_cmd)
-        sender_id = event.get_sender_id()
-        session = self.session_mgr.get_or_create_session(sender_id)
-        send_plan = await self.output_proc.parse_output_plan(result, event, session)
-        for idx, components in enumerate(send_plan):
-            if idx > 0:
-                await asyncio.sleep(self.output_proc.next_send_delay())
-            yield event.chain_result(components)
+        result = None
+        if source == "configOptions":
+            option_id = str(selected.get("id") or "")
+            value = selected.get("value")
+            if value is None or str(value).strip() == "":
+                value = mode_value
+            for option in session.config_options or []:
+                if str(option.get("category") or "").strip() == "mode":
+                    session.default_config_options.pop(
+                        str(option.get("id") or ""), None
+                    )
+            session.default_config_options[option_id] = value
+            if session.backend_session_id:
+                result = await self.executor.set_config_option(
+                    session, option_id, value
+                )
+        else:
+            session.default_mode = str(selected.get("id") or mode_value)
+            if session.backend_session_id:
+                result = await self.executor.set_mode(session, session.default_mode)
+
+        session.default_mode = str(
+            selected.get("value")
+            or selected.get("name")
+            or selected.get("id")
+            or mode_value
+        )
+
+        if result is not None and not result.ok:
+            yield event.plain_result(f"❌ mode 切换失败：{result.message}")
+            return
+
+        yield event.plain_result(
+            "✅ 已更新 mode 偏好。\n"
+            f"🎛️ 默认 mode: {session.default_mode}\n"
+            f"🎛️ 当前模式: {session.current_mode_id or session.default_mode}\n"
+            f"⚙️ 当前配置: {session.current_config_values or session.default_config_options or {}}"
+        )
 
     @filter.command("oc-send")
     async def oc_send(self, event: AstrMessageEvent, path: str = ""):
@@ -653,7 +921,11 @@ class OpenCodePlugin(Star):
                     if e.message_str.lower() in ["y", "yes", "确认", "是"]:
                         try:
                             os.makedirs(target_path, exist_ok=True)
-                            await self._init_session(event, sender_id, target_path)
+                            await e.send(
+                                e.plain_result(
+                                    await self._init_session(sender_id, target_path)
+                                )
+                            )
                             c.stop()
                         except Exception as ex:
                             await e.send(
@@ -661,44 +933,44 @@ class OpenCodePlugin(Star):
                                     f"❌ 创建目录失败: {ex}\n已回退到默认目录。"
                                 )
                             )
-                            await self._init_session(event, sender_id, default_wd)
+                            await e.send(
+                                e.plain_result(
+                                    await self._init_session(sender_id, default_wd)
+                                )
+                            )
                             c.stop()
                     else:
                         await e.send(e.plain_result("已取消自定义路径，使用默认目录。"))
-                        await self._init_session(event, sender_id, default_wd)
+                        await e.send(
+                            e.plain_result(
+                                await self._init_session(sender_id, default_wd)
+                            )
+                        )
                         c.stop()
 
                 try:
                     await confirm_path(event)
                 except TimeoutError:
                     yield event.plain_result("超时，自动使用默认工作目录。")
-                    await self._init_session(event, sender_id, default_wd)
+                    yield event.plain_result(
+                        await self._init_session(sender_id, default_wd)
+                    )
                 return
             else:
                 final_wd = target_path
 
-        await self._init_session(event, sender_id, final_wd)
+        yield event.plain_result(await self._init_session(sender_id, final_wd))
 
-    async def _init_session(self, event, sender_id, work_dir):
+    async def _init_session(self, sender_id, work_dir):
         """初始化会话的辅助函数"""
-        self.session_mgr.delete_session(sender_id)
-
-        if not os.path.exists(work_dir):
-            try:
-                os.makedirs(work_dir, exist_ok=True)
-            except Exception:
-                work_dir = os.getcwd()
-
-        session = self.session_mgr.get_or_create_session(sender_id, work_dir)
+        session = self.session_mgr.reset_session(sender_id, work_dir=work_dir)
         proxy_info = session.env.get("http_proxy", "无")
-        mode_hint = "服务器远程模式" if self.executor.is_remote_mode() else "本地模式"
-        work_dir_label = (
-            "本地缓存目录" if self.executor.is_remote_mode() else "工作目录"
-        )
-        await event.send(
-            event.plain_result(
-                f"✅ 已启动 OpenCode 新会话\n🔌 运行模式: {mode_hint}\n📂 {work_dir_label}: {session.work_dir}\n🌐 代理环境: {proxy_info}"
-            )
+        return (
+            f"✅ 已重置当前 ACP 会话绑定\n"
+            f"📂 工作目录: {session.work_dir}\n"
+            f"🌐 代理环境: {proxy_info}\n"
+            f"🧭 默认 agent: {session.default_agent or '未设置'}\n"
+            f"🪄 默认 mode: {session.default_mode or '未设置'}"
         )
 
     @filter.command("oc-end")
@@ -709,8 +981,12 @@ class OpenCodePlugin(Star):
             return
 
         sender_id = event.get_sender_id()
-        if self.session_mgr.delete_session(sender_id):
-            yield event.plain_result("🚫 已结束当前会话。")
+        session = self.session_mgr.get_session(sender_id)
+        if session:
+            session.reset_live_session()
+            lines = ["🚫 已结束当前 ACP 会话绑定。"]
+            lines.extend(self._render_live_state_lines(session, include_defaults=True))
+            yield event.plain_result("\n".join(lines))
         else:
             yield event.plain_result("当前没有活跃的会话。")
 
@@ -758,7 +1034,7 @@ class OpenCodePlugin(Star):
 
     @filter.command("oc-session")
     async def oc_session(self, event: AstrMessageEvent, query: str = ""):
-        """管理 OpenCode 会话。用法：/oc-session [序号/ID/标题]"""
+        """管理 ACP backend 会话。用法：/oc-session [序号/ID/标题]"""
         if not self.security.is_admin(event):
             yield event.plain_result("权限不足。")
             return
@@ -766,74 +1042,57 @@ class OpenCodePlugin(Star):
         sender_id = event.get_sender_id()
         query = query.strip()
 
-        # 如果没有参数，列出最近 10 个 session
+        session = self.session_mgr.get_or_create_session(sender_id)
+        listed = await self.executor.list_sessions(limit=50 if query else 10)
+        if not listed.ok:
+            yield event.plain_result(f"❌ 获取 ACP 会话列表失败：{listed.message}")
+            return
+
+        sessions = self._normalize_backend_sessions(listed.items)
+
         if not query:
-            sessions = await self.executor.list_opencode_sessions(limit=10)
             if not sessions:
-                yield event.plain_result("📋 暂无 OpenCode 会话记录。")
+                yield event.plain_result("📋 当前 backend 暂无可列出的 ACP 会话。")
                 return
 
-            lines = ["📋 OpenCode 会话列表（最近10个）：\n"]
-            for i, s in enumerate(sessions, 1):
-                session_id = s.get("id", "未知")
-                title = s.get("title", "无标题")
-                # 截断过长的标题
+            lines = ["📋 ACP 会话列表："]
+            for index, item in enumerate(sessions, start=1):
+                title = item["title"]
                 if len(title) > 40:
                     title = title[:37] + "..."
-                lines.append(f"{i}. {title}")
-                lines.append(f"   ID: {session_id}\n")
-
-            # 显示当前绑定的 session
-            current_session = self.session_mgr.get_session(sender_id)
-            if current_session and current_session.opencode_session_id:
-                lines.append(f"📌 当前绑定: {current_session.opencode_session_id}")
-            else:
-                lines.append("📌 当前绑定: 无（下次 /oc 将创建新会话）")
-
+                lines.append(f"{index}. {title}")
+                lines.append(f"   ID: {item['id']}")
+            lines.extend(self._render_live_state_lines(session, include_defaults=True))
             yield event.plain_result("\n".join(lines))
             return
 
-        # 有参数：尝试切换到指定 session
-        sessions = await self.executor.list_opencode_sessions(limit=50)
-        target_session = None
-
-        # 先检查是否为序号（1-10）
-        if query.isdigit():
-            index = int(query)
-            if 1 <= index <= min(10, len(sessions)):
-                target_session = sessions[index - 1]
-
-        # 如果不是序号，尝试精确匹配 ID
-        if not target_session:
-            for s in sessions:
-                if s.get("id") == query:
-                    target_session = s
-                    break
-
-        # 如果 ID 没匹配到，尝试模糊匹配标题
-        if not target_session:
-            query_lower = query.lower()
-            for s in sessions:
-                title = s.get("title", "").lower()
-                if query_lower in title:
-                    target_session = s
-                    break
-
+        target_session = self._match_backend_session(sessions, query)
         if not target_session:
             yield event.plain_result(
-                f"❌ 未找到匹配的会话：{query}\n请使用 /oc-session 查看可用会话列表。"
+                f"❌ 未找到匹配的会话：{query}\n请先使用 /oc-session 查看列表。"
             )
             return
 
-        # 切换到目标 session
-        session = self.session_mgr.get_or_create_session(sender_id)
-        session.set_opencode_session_id(target_session["id"])
+        can_bind, error_message = await self._prepare_history_session_bind(session)
+        if not can_bind:
+            yield event.plain_result(error_message)
+            return
 
-        yield event.plain_result(
-            f"✅ 已切换到会话：\n"
-            f"📝 标题: {target_session.get('title', '无标题')}\n"
-            f"🔑 ID: {target_session['id']}"
-        )
+        session.bind_backend_session(target_session["id"])
+        loaded = await self.executor.load_session(session)
+        if not loaded.ok:
+            session.reset_live_session()
+            yield event.plain_result(f"❌ 绑定历史会话失败：{loaded.message}")
+            return
+
+        lines = [
+            "✅ 已绑定 ACP 会话。",
+            f"📝 标题: {target_session['title']}",
+            f"🔑 ID: {target_session['id']}",
+            f"📂 当前工作目录保持: {session.work_dir}",
+        ]
+        lines.extend(self._render_live_state_lines(session, include_defaults=True))
+        yield event.plain_result("\n".join(lines))
 
     # ==================== LLM 工具 ====================
 
@@ -856,14 +1115,6 @@ class OpenCodePlugin(Star):
         final_task = await self.input_proc.process_input_message(
             event, session, task_description
         )
-
-        if self.executor.is_remote_mode():
-            local_refs = self._find_local_path_refs(final_task)
-            if local_refs:
-                await event.send(
-                    event.plain_result(self._remote_input_guard_message(local_refs))
-                )
-                return
 
         # 敏感操作需要用户确认
         if self.security.is_destructive(final_task):
@@ -923,16 +1174,15 @@ class OpenCodePlugin(Star):
         from astrbot.api.event import MessageChain
 
         try:
-            output = await self.executor.run_opencode(task, session)
-            send_plan = await self.output_proc.parse_output_plan(output, event, session)
-
-            for idx, components in enumerate(send_plan):
-                if idx > 0:
-                    await asyncio.sleep(self.output_proc.next_send_delay())
-
+            async for payload in self._run_oc_prompt(
+                event, session, task, emit_status=False
+            ):
                 message_chain = MessageChain()
-                for comp in components:
-                    message_chain.chain.append(comp)
+                if isinstance(payload, list):
+                    for comp in payload:
+                        message_chain.chain.append(comp)
+                else:
+                    message_chain.message(str(payload))
                 await self.context.send_message(umo, message_chain)
         except Exception as e:
             self.logger.error(f"OpenCode 后台执行失败: {e}")

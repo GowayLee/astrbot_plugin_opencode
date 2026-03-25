@@ -9,43 +9,58 @@
                 "default": true,
                 "hint": "开启后，只有 AstrBot 的管理员可以使用此插件功能"
             },
-            "opencode_path": {
-                "description": "OpenCode 可执行路径",
+            "backend_type": {
+                "description": "后端类型",
+                "type": "string",
+                "options": ["acp_opencode"],
+                "default": "acp_opencode",
+                "hint": "当前版本仅支持 ACP-only 的 OpenCode 后端。"
+            },
+            "acp_command": {
+                "description": "ACP 启动命令",
                 "type": "string",
                 "default": "opencode",
-                "hint": "如果已添加到环境变量，保持默认即可；否则请输入完整路径"
+                "hint": "用于启动 ACP 后端的可执行命令，默认使用环境变量中的 opencode。"
             },
-            "connection_mode": {
-                "description": "连接模式",
-                "type": "string",
-                "options": ["local", "remote"],
-                "default": "local",
-                "hint": "local=本地 Shell 模式（AstrBot 与 OpenCode 在同机）；remote=服务器模式（连接远程 OpenCode Server）。"
+            "acp_args": {
+                "description": "ACP 启动参数",
+                "type": "list",
+                "default": ["acp"],
+                "hint": "启动 ACP 后端时追加的命令参数，默认等价于执行 opencode acp。"
             },
-            "remote_server_url": {
-                "description": "远程 OpenCode Server 地址",
-                "type": "string",
-                "default": "",
-                "hint": "仅 remote 模式生效，例如 http://127.0.0.1:4096 或 https://your-server.com"
-            },
-            "remote_username": {
-                "description": "远程 Basic Auth 用户名",
-                "type": "string",
-                "default": "opencode",
-                "hint": "仅 remote 模式生效。若服务器未启用认证，可保持默认。"
-            },
-            "remote_password": {
-                "description": "远程 Basic Auth 密码",
-                "type": "string",
-                "default": "",
-                "obvious_hint": true,
-                "hint": "仅 remote 模式生效。若服务器配置了 OPENCODE_SERVER_PASSWORD，请填入对应密码。"
-            },
-            "remote_timeout": {
-                "description": "远程请求超时(秒)",
+            "acp_startup_timeout": {
+                "description": "ACP 启动超时(秒)",
                 "type": "int",
-                "default": 300,
-                "hint": "仅 remote 模式生效。用于连接 OpenCode Server 的 HTTP 请求超时。"
+                "default": 30,
+                "hint": "等待 ACP 后端完成启动与握手的最长时间。"
+            },
+            "acp_client_capabilities": {
+                "description": "ACP 客户端能力声明",
+                "type": "object",
+                "default": {
+                    "fs_read_text": true,
+                    "fs_write_text": true,
+                    "terminal": true
+                },
+                "hint": "插件初始化 ACP 时上报给后端的客户端能力。"
+            },
+            "default_agent": {
+                "description": "默认 agent",
+                "type": "string",
+                "default": "build",
+                "hint": "新建 ACP 会话时优先使用的默认 agent 名称。"
+            },
+            "default_mode": {
+                "description": "默认 mode",
+                "type": "string",
+                "default": "ask",
+                "hint": "新建 ACP 会话时优先使用的默认 mode。"
+            },
+            "default_config_options": {
+                "description": "默认 config options",
+                "type": "object",
+                "default": {},
+                "hint": "新建 ACP 会话时附带的默认配置项键值对。"
             },
             "work_dir": {
                 "description": "默认工作目录",

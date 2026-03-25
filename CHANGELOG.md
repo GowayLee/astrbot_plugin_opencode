@@ -2,11 +2,25 @@
 
 插件的版本更新历史
 
+## [Unreleased]
+
+### Breaking Changes
+
+- 插件执行模型改为 ACP-only，唯一后端为 `acp_opencode`，统一通过 `opencode acp` 启动。
+- 移除旧的 local CLI / remote HTTP 连接方式，不再保留对应配置项与用户文档说明。
+- 移除 `/oc-shell` 命令，后续交互统一收敛到 ACP 会话与工具权限流。
+
+### Changed
+
+- README、插件描述和用户可见说明已全部改写为 ACP-first 叙事，补充 `/oc-agent`、`/oc-mode`、权限确认流和会话绑定语义。
+- 配置说明同步收敛为 ACP-only 模型，强调 `default_agent`、`default_mode`、`default_config_options` 与 ACP 启动参数的作用。
+- 升级说明明确当前版本属于破坏性升级，旧版依赖的 legacy 连接配置需要手动清理并改为 ACP 配置。
+
 ## [1.3.0] - 2026-02-25
 
 ### Changed
 
-- 执行结果输出配置增强：新增 `merge_forward_enabled` 开关（默认开启）。关闭后将按顺序逐条发送命中的积木；其中 `full_text` 会单独以一次合并转发发送，兼顾可读性与防刷屏。
+- 执行结果输出配置增强：新增 `merge_forward_enabled` 开关（默认关闭）。关闭后将按顺序逐条发送命中的积木；其中 `full_text` 会单独以一次合并转发发送，兼顾可读性与防刷屏。
 - 长文本阈值策略增强：新增 `smart_trigger_ai_summary`、`smart_trigger_txt_file`、`smart_trigger_long_image` 三个智能触发开关（默认开启）。开启时对应积木仅在超过阈值时出现；关闭时只要积木被勾选就总是出现。
 - 输出发送路径统一为“发送计划”模式，`/oc`、`/oc-shell` 与 LLM 工具后台推送在非合并模式下支持顺序分条发送并增加轻量发送间隔，降低风控风险。
 - `/oc-send` 交互增强：无参数时可递归分页列出当前工作区文件，并支持 `--page`、`--find` 浏览；支持按阿拉伯数字序号/范围（如 `1,3-5`）快速发送一个或多个文件。

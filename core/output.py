@@ -8,12 +8,13 @@ import os
 import random
 import re
 import time
-from typing import List, Callable, Awaitable
+from typing import Any, List, Callable, Awaitable, Optional
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Node, Plain, Image, File, Nodes
 
+from .acp_models import ACPNormalizedEvent
 from .session import OpenCodeSession
 from .utils import write_text_file_sync
 
@@ -119,18 +120,26 @@ def ansi_to_html(text: str) -> str:
 class OutputProcessor:
     """输出处理器 - 负责处理和格式化输出"""
 
+    STANDARD_PERMISSION_OPTION_IDS = {
+        "allow_once",
+        "allow_always",
+        "reject_once",
+        "reject_always",
+        "cancelled",
+    }
+
     def __init__(self, config: dict, base_data_dir: str):
         self.config = config
         self.base_data_dir = base_data_dir
         self.logger = logger
         # html_render 方法由外部注入
-        self._html_render: Callable[[str, dict], Awaitable[str]] = None
+        self._html_render: Optional[Callable[[str, dict], Awaitable[str]]] = None
         # context.llm_generate 方法由外部注入
-        self._llm_generate: Callable = None
+        self._llm_generate: Optional[Callable] = None
         # context.get_current_chat_provider_id 方法由外部注入
-        self._get_provider_id: Callable = None
+        self._get_provider_id: Optional[Callable] = None
         # 模板目录（用于长图渲染）
-        self._template_dir: str = None
+        self._template_dir: Optional[str] = None
 
     def set_html_render(self, html_render_func):
         """设置 HTML 渲染函数"""
@@ -144,6 +153,274 @@ class OutputProcessor:
     def set_template_dir(self, template_dir: str):
         """设置模板目录"""
         self._template_dir = template_dir
+
+    def normalize_acp_event(
+        self, event: ACPNormalizedEvent | dict[str, Any]
+    ) -> ACPNormalizedEvent:
+        """将原始 ACP update 统一成聊天层消费的内部事件。"""
+        if isinstance(event, ACPNormalizedEvent):
+            return event
+
+        payload = dict(event or {})
+        event_type = str(payload.get("type") or payload.get("event_type") or "").strip()
+        title = str(
+            payload.get("title")
+            or payload.get("tool_name")
+            or payload.get("toolTitle")
+            or payload.get("name")
+            or ""
+        ).strip()
+        detail = str(payload.get("detail") or payload.get("message") or "").strip()
+        session_id = payload.get("sessionId") or payload.get("session_id")
+
+        return ACPNormalizedEvent(
+            event_type=event_type,
+            session_id=None if session_id is None else str(session_id),
+            title=title,
+            detail=detail,
+            data=payload,
+        )
+
+    def build_chat_updates(
+        self,
+        events: list[ACPNormalizedEvent | dict[str, Any]],
+        session: Optional[OpenCodeSession] = None,
+    ) -> list[str]:
+        """将 ACP 事件折叠成聊天侧简洁进度提示。"""
+        updates: list[str] = []
+
+        for item in events:
+            event = self.normalize_acp_event(item)
+            message = self._build_chat_update(event, session)
+            if message:
+                updates.append(message)
+
+        return updates
+
+    def _build_chat_update(
+        self, event: ACPNormalizedEvent, session: Optional[OpenCodeSession] = None
+    ) -> str:
+        event_type = event.event_type
+
+        if event_type == "run_started":
+            if session:
+                session.prompt_running = True
+            return "🚀 开始执行任务"
+
+        if event_type == "plan_updated":
+            summary = (
+                event.detail or event.title or self._extract_plan_summary(event.data)
+            )
+            return f"📝 计划更新: {summary}" if summary else "📝 计划已更新"
+
+        if event_type == "message_chunk":
+            return ""
+
+        if event_type == "tool_started":
+            return self._format_tool_update("🛠️", event)
+
+        if event_type == "tool_updated":
+            return self._format_tool_update("🔄", event)
+
+        if event_type == "permission_requested":
+            permission_payload = self._extract_permission_payload(event)
+            if session:
+                session.set_pending_permission(permission_payload)
+            return self._format_permission_update(permission_payload)
+
+        if event_type == "config_updated":
+            summary = event.detail or event.title or "配置已更新"
+            return f"⚙️ {summary}"
+
+        if event_type == "mode_updated":
+            summary = event.detail or event.title or "模式已更新"
+            return f"🎛️ {summary}"
+
+        if event_type == "run_finished":
+            if session:
+                session.prompt_running = False
+                session.clear_pending_permission()
+            stop_reason = str(
+                event.data.get("stopReason")
+                or event.data.get("stop_reason")
+                or "end_turn"
+            )
+            if stop_reason == "cancelled":
+                return "🛑 本轮任务已取消"
+            if stop_reason == "refusal":
+                return "🚫 当前请求被拒绝"
+            return "✅ 执行完成"
+
+        if event_type == "run_failed":
+            if session:
+                session.prompt_running = False
+                session.clear_pending_permission()
+            summary = (
+                event.detail or event.title or event.data.get("message") or "执行失败"
+            )
+            return f"❌ {summary}"
+
+        return ""
+
+    async def build_final_result_plan(
+        self,
+        result: Any,
+        event: AstrMessageEvent,
+        session: Optional[OpenCodeSession] = None,
+    ) -> List[List]:
+        """将最终 stop reason 映射为聊天输出，并复用既有输出积木链路。"""
+        event_updates = self.build_chat_updates(
+            self._extract_embedded_events(result),
+            session=session,
+        )
+        prefix_plan = self._build_update_plan(event_updates)
+        stop_reason = getattr(result, "stop_reason", None) or getattr(
+            result, "error_type", None
+        )
+        final_text = getattr(result, "final_text", "") or ""
+        message = getattr(result, "message", "") or ""
+
+        self._finalize_terminal_session_state(session, stop_reason)
+
+        if stop_reason == "cancelled":
+            return prefix_plan + [[Plain("🛑 本轮任务已取消")]]
+
+        if stop_reason == "refusal":
+            if final_text.strip():
+                return prefix_plan + await self.parse_output_plan(
+                    final_text, event, session
+                )
+            return prefix_plan + [[Plain("🚫 当前请求被拒绝")]]
+
+        if final_text.strip():
+            return prefix_plan + await self.parse_output_plan(
+                final_text, event, session
+            )
+
+        if message.strip():
+            return prefix_plan + [[Plain(message.strip())]]
+
+        if prefix_plan:
+            return prefix_plan
+
+        return [[Plain("OpenCode 执行完毕，无输出。")]]
+
+    def _format_tool_update(self, prefix: str, event: ACPNormalizedEvent) -> str:
+        title = event.title or "工具执行"
+        detail = event.detail or self._extract_tool_detail(event.data)
+        return f"{prefix} {title}: {detail}" if detail else f"{prefix} {title}"
+
+    def _extract_plan_summary(self, payload: dict[str, Any]) -> str:
+        plan = payload.get("plan") or payload.get("steps") or []
+        if isinstance(plan, list) and plan:
+            first = plan[0]
+            if isinstance(first, dict):
+                return str(first.get("title") or first.get("text") or "").strip()
+            return str(first).strip()
+        return ""
+
+    def _extract_tool_detail(self, payload: dict[str, Any]) -> str:
+        for key in ("detail", "path", "command", "summary", "message"):
+            value = payload.get(key)
+            if value:
+                return str(value).strip()
+        return ""
+
+    def _extract_permission_payload(self, event: ACPNormalizedEvent) -> dict[str, Any]:
+        payload = dict(event.data)
+        normalized_options = []
+        for index, option in enumerate(payload.get("options") or [], start=1):
+            if not isinstance(option, dict):
+                continue
+            option_id = (
+                option.get("optionId") or option.get("option_id") or option.get("id")
+            )
+            label = (
+                option.get("label") or option.get("name") or option_id or f"选项{index}"
+            )
+            normalized_options.append(
+                {
+                    "optionId": "" if option_id is None else str(option_id),
+                    "label": str(label),
+                    "index": index,
+                    "display": self._format_permission_option_display(option_id, label),
+                }
+            )
+
+        return {
+            "requestId": payload.get("requestId")
+            or payload.get("request_id")
+            or payload.get("id"),
+            "toolName": payload.get("tool_name")
+            or payload.get("toolName")
+            or event.title
+            or "未知工具",
+            "toolKind": payload.get("tool_kind")
+            or payload.get("toolKind")
+            or payload.get("kind")
+            or "",
+            "arguments": dict(payload.get("arguments") or {}),
+            "options": normalized_options,
+        }
+
+    def _format_permission_update(self, permission_payload: dict[str, Any]) -> str:
+        tool_name = str(permission_payload.get("toolName") or "未知工具")
+        tool_kind = str(permission_payload.get("toolKind") or "")
+        arguments = permission_payload.get("arguments") or {}
+        detail = self._extract_tool_detail(arguments)
+        options = permission_payload.get("options") or []
+        option_text = " ".join(
+            f"{item['index']}.{item['display']}"
+            for item in options
+            if item.get("display")
+        )
+
+        parts = [f"⚠️ 权限确认: {tool_name}"]
+        if tool_kind:
+            parts.append(f"类型: {tool_kind}")
+        if detail:
+            parts.append(f"目标: {detail}")
+        if option_text:
+            parts.append(f"选项: {option_text}")
+        return " | ".join(parts)
+
+    def _extract_embedded_events(self, result: Any) -> list[Any]:
+        payload = getattr(result, "payload", {}) or {}
+        if isinstance(payload, dict):
+            for key in ("events", "updates", "items"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return list(value)
+
+        items = getattr(result, "items", None)
+        if isinstance(items, list):
+            return list(items)
+
+        return []
+
+    def _build_update_plan(self, updates: list[str]) -> List[List]:
+        if not updates:
+            return []
+        return [[Plain("\n".join(updates))]]
+
+    def _finalize_terminal_session_state(
+        self, session: Optional[OpenCodeSession], stop_reason: Any
+    ) -> None:
+        if not session:
+            return
+        if stop_reason is None:
+            return
+        session.prompt_running = False
+        session.clear_pending_permission()
+
+    def _format_permission_option_display(self, option_id: Any, label: Any) -> str:
+        option_id_text = "" if option_id is None else str(option_id).strip()
+        label_text = "" if label is None else str(label).strip()
+        if option_id_text and option_id_text not in self.STANDARD_PERMISSION_OPTION_IDS:
+            if label_text:
+                return f"{option_id_text} + {label_text}"
+            return option_id_text
+        return label_text or option_id_text
 
     def next_send_delay(self) -> float:
         """获取逐条发送时的随机间隔，降低风控风险。"""
@@ -163,7 +440,7 @@ class OutputProcessor:
             return is_long
         return True
 
-    async def render_long_image(self, text: str) -> str:
+    async def render_long_image(self, text: str) -> Optional[str]:
         """渲染长图"""
         if not self._template_dir or not self._html_render:
             self.logger.error("模板目录或 HTML 渲染函数未设置")
@@ -187,9 +464,12 @@ class OutputProcessor:
             return None
 
     async def parse_output_plan(
-        self, output: str, event: AstrMessageEvent, session: OpenCodeSession = None
+        self, output: Any, event: AstrMessageEvent, session: OpenCodeSession = None
     ) -> List[List]:
         """解析输出并构造发送计划（每个元素代表一次消息发送的组件列表）。"""
+        if self._looks_like_execution_result(output):
+            return await self.build_final_result_plan(output, event, session)
+
         output_config = self.config.get("output_config", {})
         output_modes = output_config.get("output_modes", ["full_text", "txt_file"])
         max_length = output_config.get("max_text_length", 1000)
@@ -206,7 +486,7 @@ class OutputProcessor:
 
         # 修复 re.error: bad character range @-?
         ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-        clean_text = ansi_escape.sub("", output)
+        clean_text = ansi_escape.sub("", str(output))
 
         # 统一处理文本换行
         text_lines = []
@@ -364,10 +644,13 @@ class OutputProcessor:
         return [[Plain("执行完成 (无符合条件的输出)。")]]
 
     async def parse_output(
-        self, output: str, event: AstrMessageEvent, session: OpenCodeSession = None
+        self, output: Any, event: AstrMessageEvent, session: OpenCodeSession = None
     ) -> List:
         """兼容接口：返回发送计划中的第一条消息组件。"""
         send_plan = await self.parse_output_plan(output, event, session)
         if not send_plan:
             return [Plain("执行完成 (无符合条件的输出)。")]
         return send_plan[0]
+
+    def _looks_like_execution_result(self, output: Any) -> bool:
+        return hasattr(output, "stop_reason") and hasattr(output, "final_text")
