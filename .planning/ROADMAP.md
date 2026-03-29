@@ -73,6 +73,18 @@ Plans:
 
 - [x] 02.1-01-PLAN.md — 定位宿主加载链路并修复配置面板未同步的根因
 
+### Phase 02.2: 调研补全Astrbot插件开发文档、ACP协议、OpenCode ACP Server规格 (INSERTED)
+
+**Goal:** 补全docs/references目录中的关键文档，为后续开发提供准确的协议与规格参考。
+**Requirements**: TBD
+**Depends on:** Phase 2
+**Plans:** 2 plans
+
+Plans:
+
+- [ ] 02.2-01-PLAN.md — 建立 AstrBot 与 ACP 两份开发参考基线
+- [ ] 02.2-02-PLAN.md — 补齐 OpenCode 参考并收口 docs/references 统一索引
+
 ### Phase 3: 直接聊天交互体验
 
 **Goal**: 用户在 IM 中可以像直接操控 Coding Agent 一样发起任务、跟踪过程并完成必要确认。
@@ -106,12 +118,13 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 2.1 → 3 → 4
+Phases execute in numeric order: 1 → 2 → 2.1 → 2.2 → 3 → 4
 
-| Phase                       | Plans Complete | Status      | Completed  |
-| --------------------------- | -------------- | ----------- | ---------- |
-| 1. 配置收敛与兼容迁移       | 1/1            | Implemented | 2026-03-29 |
-| 2. 会话内核与生命周期统一   | 2/2            | Complete    | 2026-03-29 |
-| 2.1. 配置面板同步与联调验证 | 1/1 | Complete   | 2026-03-29 |
-| 3. 直接聊天交互体验         | 0/TBD          | Not started | -          |
-| 4. Tool 回传与统一安全策略  | 0/TBD          | Not started | -          |
+| Phase                           | Plans Complete | Status      | Completed  |
+| ------------------------------- | -------------- | ----------- | ---------- |
+| 1. 配置收敛与兼容迁移           | 1/1            | Implemented | 2026-03-29 |
+| 2. 会话内核与生命周期统一       | 2/2            | Complete    | 2026-03-29 |
+| 2.1. 配置面板同步与联调验证     | 1/1            | Complete    | 2026-03-29 |
+| 2.2. 调研补全开发文档与协议规格 | 0/2            | Planned     | -          |
+| 3. 直接聊天交互体验             | 0/TBD          | Not started | -          |
+| 4. Tool 回传与统一安全策略      | 0/TBD          | Not started | -          |
