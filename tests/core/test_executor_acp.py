@@ -139,7 +139,6 @@ def make_executor_and_session():
     executor = executor_module.CommandExecutor(
         {
             "basic_config": {
-                "backend_type": "acp_opencode",
                 "acp_command": "opencode",
                 "acp_args": ["acp"],
                 "acp_startup_timeout": 30,
@@ -282,7 +281,6 @@ def test_health_check_reports_unhealthy_when_acp_command_cannot_start():
     executor = executor_module.CommandExecutor(
         {
             "basic_config": {
-                "backend_type": "acp_opencode",
                 "acp_command": "definitely-not-a-real-opencode-command-xyz",
                 "acp_args": ["acp"],
                 "acp_startup_timeout": 1,
@@ -425,6 +423,38 @@ def test_executor_falls_back_to_new_session_when_recovery_is_unavailable_or_inva
         "session/new",
         "session/prompt",
     ]
+
+
+def test_executor_recovery_failure_clears_runtime_flags_before_recreate():
+    executor_module, executor, session, input_module = make_executor_and_session()
+    session.backend_session_id = "ses_stale"
+    session.pending_permission = {"id": "perm_1"}
+    session.prompt_running = True
+    fake_client = FakeClient(
+        responses={
+            "initialize": {"protocolVersion": 1, "capabilities": {"loadSession": True}},
+            "session/new": {"sessionId": "ses_fresh"},
+            "session/prompt": {
+                "sessionId": "ses_fresh",
+                "stopReason": "end_turn",
+                "outputText": "新会话",
+            },
+        },
+        load_error=executor_module.ACPError(message="session missing"),
+    )
+    executor._client = fake_client
+
+    result = asyncio.run(
+        executor.run_prompt(
+            {"contentBlocks": [{"type": "text", "text": "继续"}]},
+            session,
+        )
+    )
+
+    assert result.ok is True
+    assert session.backend_session_id == "ses_fresh"
+    assert session.pending_permission is None
+    assert session.prompt_running is False
 
 
 def test_executor_skips_recovery_when_backend_does_not_support_it():

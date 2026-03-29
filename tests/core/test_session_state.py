@@ -109,14 +109,18 @@ def test_conf_schema_is_acp_only_contract():
     schema = json.loads((REPO_ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
     items = schema["basic_config"]["items"]
 
-    assert "backend_type" in items
     assert "acp_command" in items
     assert "acp_args" in items
     assert "acp_startup_timeout" in items
-    assert "acp_client_capabilities" in items
-    assert "default_agent" in items
-    assert "default_mode" in items
-    assert "default_config_options" in items
+    assert "allow_file_writes" in items
+    assert "backend_type" not in items
+    assert "acp_client_capabilities" not in items
+    assert "default_agent" not in items
+    assert "default_mode" not in items
+    assert "default_config_options" not in items
+    assert "confirm_all_write_ops" not in items
+    assert "tool_config" not in schema
+    assert "output_config" not in schema
 
     assert "connection_mode" not in items
     assert "remote_server_url" not in items
@@ -124,19 +128,6 @@ def test_conf_schema_is_acp_only_contract():
     assert "remote_password" not in items
     assert "remote_timeout" not in items
     assert "opencode_path" not in items
-
-
-def test_conf_schema_uses_current_astrbot_supported_object_shapes_for_dynamic_mappings():
-    schema = json.loads((REPO_ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
-    basic_items = schema["basic_config"]["items"]
-
-    acp_client_capabilities = basic_items["acp_client_capabilities"]
-    default_config_options = basic_items["default_config_options"]
-
-    assert acp_client_capabilities["type"] == "object"
-    assert acp_client_capabilities["items"] == {}
-    assert default_config_options["type"] == "object"
-    assert default_config_options["items"] == {}
 
 
 def test_session_defaults_keep_preference_and_live_state_separate():
@@ -200,6 +191,35 @@ def test_reset_live_session_preserves_defaults_and_work_dir():
     assert session.available_modes == []
     assert session.available_commands == []
     assert session.session_capabilities == {}
+    assert session.pending_permission is None
+    assert session.prompt_running is False
+
+
+def test_drop_backend_session_clears_live_state_but_keeps_defaults_and_work_dir():
+    session_module = load_session_module()
+    session = session_module.OpenCodeSession(
+        work_dir="/tmp/demo",
+        env={},
+        backend_kind="acp_opencode",
+        default_agent="build",
+        default_mode="ask",
+        default_config_options={"model": "gpt-5"},
+    )
+    session.backend_session_id = "ses_stale"
+    session.agent_name = "plan"
+    session.current_mode_id = "code"
+    session.pending_permission = {"id": "perm_1"}
+    session.prompt_running = True
+
+    session.drop_backend_session()
+
+    assert session.work_dir == "/tmp/demo"
+    assert session.default_agent == "build"
+    assert session.default_mode == "ask"
+    assert session.default_config_options == {"model": "gpt-5"}
+    assert session.backend_session_id is None
+    assert session.agent_name is None
+    assert session.current_mode_id is None
     assert session.pending_permission is None
     assert session.prompt_running is False
 
@@ -288,6 +308,22 @@ def test_session_manager_does_not_hardcode_backend_default(tmp_path):
     assert session.backend_kind is None
 
 
+def test_session_manager_uses_builtin_agent_and_mode_fallbacks(tmp_path):
+    session_module = load_session_module()
+    config = {
+        "basic_config": {
+            "work_dir": str(tmp_path / "default"),
+            "proxy_url": "",
+        }
+    }
+    manager = session_module.SessionManager(config, str(tmp_path / "data"))
+
+    session = manager.get_or_create_session("alice")
+
+    assert session.default_agent == "build"
+    assert session.default_mode == "ask"
+
+
 def test_main_source_has_no_deleted_mode_guidance():
     source = read_source("main.py")
 
@@ -313,7 +349,6 @@ def test_executor_exposes_canonical_acp_launch_config():
     executor = executor_module.CommandExecutor(
         {
             "basic_config": {
-                "backend_type": "acp_opencode",
                 "acp_command": "opencode",
                 "acp_args": ["acp", "--stdio"],
                 "acp_startup_timeout": 45,
@@ -338,7 +373,6 @@ def test_executor_health_check_consumes_acp_launch_config():
     executor = executor_module.CommandExecutor(
         {
             "basic_config": {
-                "backend_type": "acp_opencode",
                 "acp_command": "opencode",
                 "acp_args": ["acp"],
                 "acp_startup_timeout": 12,
