@@ -249,6 +249,45 @@ def test_executor_loads_existing_session_when_backend_supports_recovery():
     assert fake_client.calls[2][1]["prompt"] == [{"type": "text", "text": "继续"}]
 
 
+def test_executor_prefers_agent_capabilities_for_session_recovery_support():
+    executor_module, executor, session, input_module = make_executor_and_session()
+    session.backend_session_id = "ses_existing"
+    fake_client = FakeClient(
+        responses={
+            "initialize": {
+                "protocolVersion": 1,
+                "agentCapabilities": {"loadSession": True},
+                "capabilities": {"loadSession": False},
+            },
+            "session/load": {
+                "sessionId": "ses_existing",
+                "agent": {"name": "plan", "title": "Plan"},
+            },
+            "session/prompt": {
+                "sessionId": "ses_existing",
+                "stopReason": "end_turn",
+                "outputText": "继续",
+            },
+        }
+    )
+    executor._client = fake_client
+
+    result = asyncio.run(
+        executor.run_prompt(
+            {"prompt": [{"type": "text", "text": "继续"}]},
+            session,
+        )
+    )
+
+    assert result.ok is True
+    assert fake_client.protocol_capabilities == {"loadSession": True}
+    assert [call[0] for call in fake_client.calls] == [
+        "initialize",
+        "session/load",
+        "session/prompt",
+    ]
+
+
 def test_executor_exposes_public_load_session_entry():
     executor_module, executor, session, input_module = make_executor_and_session()
     session.backend_session_id = "ses_existing"
@@ -649,21 +688,34 @@ def test_executor_stream_prompt_emits_runtime_notifications_and_refreshes_sessio
                     "session/update",
                     {
                         "sessionId": "ses_runtime",
-                        "type": "mode_updated",
-                        "detail": "已切换到 code",
-                        "mode": "code",
-                        "currentConfigValues": {"mode.code": "code"},
+                        "update": {
+                            "sessionUpdate": "mode_updated",
+                            "detail": "已切换到 code",
+                            "modes": {
+                                "availableModes": [
+                                    {"id": "ask", "name": "Ask"},
+                                    {"id": "code", "name": "Code"},
+                                ],
+                                "currentModeId": "code",
+                            },
+                            "currentConfigValues": {"mode.code": "code"},
+                        },
                     },
                 ),
                 (
                     "session/update",
                     {
                         "sessionId": "ses_runtime",
-                        "type": "permission_requested",
-                        "tool_name": "write_file",
-                        "tool_kind": "edit",
-                        "arguments": {"path": "core/output.py"},
-                        "options": [{"optionId": "allow_once", "label": "允许一次"}],
+                        "update": {
+                            "sessionUpdate": "permission_requested",
+                            "requestId": "perm_runtime",
+                            "tool": {
+                                "name": "write_file",
+                                "kind": "edit",
+                                "arguments": {"path": "core/output.py"},
+                            },
+                            "options": [{"id": "allow_once", "name": "允许一次"}],
+                        },
                     },
                 ),
             ],
@@ -693,9 +745,14 @@ def test_executor_stream_prompt_emits_runtime_notifications_and_refreshes_sessio
     assert [item["kind"] for item in items] == ["event", "event", "result"]
     assert items[0]["event"]["type"] == "mode_updated"
     assert items[1]["event"]["type"] == "permission_requested"
+    assert items[1]["event"]["requestId"] == "perm_runtime"
     assert items[2]["result"].final_text == "完成"
     assert session.current_mode_id == "code"
     assert session.current_config_values == {"mode.code": "code"}
+    assert session.available_modes == [
+        {"id": "ask", "name": "Ask"},
+        {"id": "code", "name": "Code"},
+    ]
 
 
 def test_normalize_runtime_event_maps_direct_permission_method_to_internal_shape():
@@ -717,6 +774,42 @@ def test_normalize_runtime_event_maps_direct_permission_method_to_internal_shape
 
     assert event["type"] == "permission_requested"
     assert event["requestId"] == "perm_123"
+    assert event["sessionId"] == "ses_runtime"
+    assert event["tool_name"] == "write_file"
+    assert event["tool_kind"] == "edit"
+    assert event["arguments"] == {"path": "core/output.py"}
+    assert event["options"] == [
+        {
+            "id": "allow_once",
+            "name": "允许一次",
+            "optionId": "allow_once",
+            "label": "允许一次",
+        }
+    ]
+
+
+def test_normalize_runtime_event_unwraps_session_update_payload_and_preserves_permission_shape():
+    executor_module, executor, session, input_module = make_executor_and_session()
+
+    event = executor._normalize_runtime_event(
+        "session/update",
+        {
+            "sessionId": "ses_runtime",
+            "update": {
+                "sessionUpdate": "permission_requested",
+                "requestId": "perm_456",
+                "tool": {
+                    "name": "write_file",
+                    "kind": "edit",
+                    "arguments": {"path": "core/output.py"},
+                },
+                "options": [{"id": "allow_once", "name": "允许一次"}],
+            },
+        },
+    )
+
+    assert event["type"] == "permission_requested"
+    assert event["requestId"] == "perm_456"
     assert event["sessionId"] == "ses_runtime"
     assert event["tool_name"] == "write_file"
     assert event["tool_kind"] == "edit"

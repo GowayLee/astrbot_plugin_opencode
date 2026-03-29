@@ -110,6 +110,33 @@ def test_agent_view_keeps_agent_separate_from_mode_state():
     assert [option.semantic_kind for option in session_state.config_options] == ["mode"]
 
 
+def test_session_state_reads_modes_object_and_agent_capabilities_from_acp_v1_payload():
+    adapter_module = load_acp_module("acp_adapter")
+    adapter = adapter_module.OpenCodeACPAdapter()
+
+    session_state = adapter.normalize_session_state(
+        session_payload={
+            "sessionId": "ses_v1",
+            "modes": {
+                "availableModes": [
+                    {"id": "ask", "name": "Ask"},
+                    {"id": "code", "name": "Code"},
+                ],
+                "currentModeId": "code",
+            },
+            "agentCapabilities": {"imageInput": True},
+        }
+    )
+
+    assert session_state.mode.source == "modes"
+    assert session_state.mode.current_mode_id == "code"
+    assert [option.option_id for option in session_state.mode.options] == [
+        "ask",
+        "code",
+    ]
+    assert session_state.capabilities == {"imageInput": True}
+
+
 def test_config_option_semantics_are_explicit_for_mode_and_model():
     adapter_module = load_acp_module("acp_adapter")
     adapter = adapter_module.OpenCodeACPAdapter()
