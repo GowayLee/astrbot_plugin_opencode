@@ -531,7 +531,7 @@ class CommandExecutor:
     def _apply_session_state(
         self, session: OpenCodeSession, payload: Optional[dict[str, Any]]
     ) -> None:
-        payload = dict(payload or {})
+        payload = self._unwrap_session_payload(payload)
         if not payload:
             return
 
@@ -560,8 +560,25 @@ class CommandExecutor:
             session.available_commands = [
                 self._command_to_dict(item) for item in normalized.commands
             ]
-        if "capabilities" in payload:
+        if any(key in payload for key in ("capabilities", "agentCapabilities")):
             session.session_capabilities = dict(normalized.capabilities)
+
+    def _unwrap_session_payload(
+        self, payload: Optional[dict[str, Any]]
+    ) -> dict[str, Any]:
+        base_payload = dict(payload or {})
+        update_payload = base_payload.get("update")
+        if not isinstance(update_payload, dict):
+            return base_payload
+
+        merged = dict(base_payload)
+        merged.pop("update", None)
+        merged.update(update_payload)
+        if "sessionId" not in merged and "sessionId" in base_payload:
+            merged["sessionId"] = base_payload["sessionId"]
+        if "id" not in merged and "id" in base_payload:
+            merged["id"] = base_payload["id"]
+        return merged
 
     def _config_option_to_dict(self, option) -> dict[str, Any]:
         return {
@@ -712,12 +729,17 @@ class CommandExecutor:
     def _normalize_runtime_event(
         self, method: str, params: Optional[dict[str, Any]] = None
     ) -> dict[str, Any]:
-        payload = dict(params or {})
+        payload = self._unwrap_session_payload(params)
         if not payload and not method:
             return {}
 
         normalized_method = str(method or "").strip().replace(".", "/")
-        event_type = str(payload.get("type") or payload.get("event_type") or "").strip()
+        event_type = str(
+            payload.get("type")
+            or payload.get("event_type")
+            or payload.get("sessionUpdate")
+            or ""
+        ).strip()
         if not event_type:
             if (
                 payload.get("permission")
@@ -738,6 +760,8 @@ class CommandExecutor:
             event["type"] = "permission_requested"
         elif event_type == "permission_requested":
             event = self._normalize_permission_event(payload, event)
+
+        event.pop("sessionUpdate", None)
 
         return event
 
@@ -823,6 +847,7 @@ class CommandExecutor:
             "modes",
             "availableCommands",
             "capabilities",
+            "agentCapabilities",
         }
         if any(key in event for key in session_payload_keys):
             self._apply_session_state(session, event)

@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 02.3-acp-opencode-invalid-params-01-PLAN.md
-last_updated: "2026-03-29T14:56:30.133Z"
+status: verifying
+stopped_at: Completed 02.3-02-PLAN.md
+last_updated: "2026-03-29T15:04:19.647Z"
 last_activity: 2026-03-29
 progress:
   total_phases: 7
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 5
-  completed_plans: 6
+  completed_plans: 7
   percent: 50
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-03-29)
 
 Phase: 02.3 (acp-opencode-invalid-params) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-03-29
 
 Progress: [█████░░░░░] 50%
@@ -57,6 +57,7 @@ Progress: [█████░░░░░] 50%
 | Phase 02 P02 | 5 min | 2 tasks | 3 files |
 | Phase 02.1 P01 | 4 min | 3 tasks | 5 files |
 | Phase 02.3-acp-opencode-invalid-params P01 | 1 min | 2 tasks | 5 files |
+| Phase 02.3 P02 | 2 min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -77,6 +78,8 @@ Recent decisions affecting current work:
 - [Quick 260329-suy]: metadata.yaml 重新成为插件身份唯一基线，运行时对外身份改为 astrbot_plugin_acp / ACP Client / Hauryn Lee。
 - [Phase 02.3-acp-opencode-invalid-params]: initialize 固定发送 protocolVersion/clientCapabilities/clientInfo，避免继续沿用旧 capabilities 字段。
 - [Phase 02.3-acp-opencode-invalid-params]: prompt 输入在 executor 层统一归一化为 prompt 数组，同时保留 text 仅作本地兼容辅助。
+- [Phase 02.3]: 先在 executor 里统一解包 params.update，再把 sessionUpdate 映射回现有 event.type，保持 output pipeline 不变。
+- [Phase 02.3]: 把 ACP v1 的 modes 对象与 agentCapabilities 在 adapter 层归一化，避免状态消费分散到上层调用点。
 
 ### Roadmap Evolution
 
@@ -102,6 +105,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-29T14:56:30.123Z
-Stopped at: Completed 02.3-acp-opencode-invalid-params-01-PLAN.md
+Last session: 2026-03-29T15:04:19.628Z
+Stopped at: Completed 02.3-02-PLAN.md
 Resume file: None

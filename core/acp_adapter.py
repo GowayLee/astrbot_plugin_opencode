@@ -21,13 +21,28 @@ class OpenCodeACPAdapter:
     def extract_mode_view(
         self,
         config_options: Optional[list[dict[str, Any]]] = None,
-        modes: Optional[list[dict[str, Any]]] = None,
+        modes: Optional[list[dict[str, Any]] | dict[str, Any]] = None,
         current_config_values: Optional[dict[str, Any]] = None,
         current_mode_id: Optional[str] = None,
     ) -> ACPModeView:
         current_config_values = dict(current_config_values or {})
         config_options = list(config_options or [])
-        modes = list(modes or [])
+        modes_payload = dict(modes) if isinstance(modes, dict) else None
+        normalized_raw_modes: list[dict[str, Any]] = []
+        if modes_payload is not None:
+            normalized_raw_modes = [
+                item
+                for item in list(modes_payload.get("availableModes") or [])
+                if isinstance(item, dict)
+            ]
+            current_mode_id = (
+                self._as_optional_str(modes_payload.get("currentModeId"))
+                or current_mode_id
+            )
+        else:
+            normalized_raw_modes = [
+                item for item in list(modes or []) if isinstance(item, dict)
+            ]
 
         mode_options = [
             self._normalize_config_option(item)
@@ -44,15 +59,17 @@ class OpenCodeACPAdapter:
                 source="configOptions",
                 current_mode_id=resolved_mode,
                 options=mode_options,
-                raw_modes=modes,
+                raw_modes=normalized_raw_modes,
             )
 
-        normalized_modes = [self._normalize_mode_as_option(item) for item in modes]
+        normalized_modes = [
+            self._normalize_mode_as_option(item) for item in normalized_raw_modes
+        ]
         return ACPModeView(
             source="modes" if normalized_modes else "none",
             current_mode_id=current_mode_id,
             options=normalized_modes,
-            raw_modes=modes,
+            raw_modes=normalized_raw_modes,
         )
 
     def normalize_session_state(
@@ -61,6 +78,14 @@ class OpenCodeACPAdapter:
         session_payload = dict(session_payload or {})
         config_options_payload = list(session_payload.get("configOptions") or [])
         current_config_values = dict(session_payload.get("currentConfigValues") or {})
+        modes_payload = session_payload.get("modes")
+
+        current_mode_id = self._as_optional_str(session_payload.get("mode"))
+        if isinstance(modes_payload, dict):
+            current_mode_id = (
+                self._as_optional_str(modes_payload.get("currentModeId"))
+                or current_mode_id
+            )
 
         return ACPSessionState(
             session_id=self._as_optional_str(
@@ -69,9 +94,9 @@ class OpenCodeACPAdapter:
             agent=self.normalize_agent(session_payload.get("agent")),
             mode=self.extract_mode_view(
                 config_options=config_options_payload,
-                modes=session_payload.get("modes"),
+                modes=modes_payload,
                 current_config_values=current_config_values,
-                current_mode_id=self._as_optional_str(session_payload.get("mode")),
+                current_mode_id=current_mode_id,
             ),
             config_options=[
                 self._normalize_config_option(item) for item in config_options_payload
@@ -80,7 +105,11 @@ class OpenCodeACPAdapter:
             commands=self.normalize_commands(
                 session_payload.get("availableCommands") or []
             ),
-            capabilities=dict(session_payload.get("capabilities") or {}),
+            capabilities=dict(
+                session_payload.get("capabilities")
+                or session_payload.get("agentCapabilities")
+                or {}
+            ),
             raw=session_payload,
         )
 
@@ -131,7 +160,11 @@ class OpenCodeACPAdapter:
             arguments = {}
 
         return ACPPermissionRequest(
-            request_id=self._as_str(payload.get("id")),
+            request_id=self._as_str(
+                payload.get("requestId")
+                or payload.get("request_id")
+                or payload.get("id")
+            ),
             session_id=self._as_optional_str(payload.get("sessionId")),
             tool_name=self._as_str(
                 tool_payload.get("title") or tool_payload.get("name")
