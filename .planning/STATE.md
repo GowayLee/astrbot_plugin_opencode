@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: verifying
 stopped_at: Completed 02.3-02-PLAN.md
-last_updated: "2026-03-29T15:04:19.647Z"
+last_updated: "2026-03-29T16:35:43.987Z"
 last_activity: 2026-03-29
 progress:
   total_phases: 7
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-29)
 
 **Core value:** 让 AstrBot 以自然、可控、低配置负担的方式接入 ACP Coding Agent，而不是把整套底层协议细节直接暴露给管理员和最终用户。
-**Current focus:** Phase 02.3 — acp-opencode-invalid-params
+**Current focus:** Phase 3 — 直接聊天交互体验
 
 ## Current Position
 
-Phase: 02.3 (acp-opencode-invalid-params) — EXECUTING
-Plan: 2 of 2
-Status: Phase complete — ready for verification
+Phase: 3
+Plan: Not started
+Status: Not started
 Last activity: 2026-03-29
 
 Progress: [█████░░░░░] 50%
@@ -91,6 +91,8 @@ Recent decisions affecting current work:
 
 - 执行 02.1-01：确认 AstrBot 实际加载的是哪份插件元数据与 schema，并修复配置面板未同步的问题。
 - 完成 Phase 2.1 后，回到 Phase 2 verify，做真实运行环境验证。
+- session 对话已能创建，但消息回传链路似乎尚未实现；后续单独起一个 phase 设计并实现。
+- 简化 slash-command 与会话/sender 状态提示，减少聊天噪音，同时保留必要的会话绑定与 mode/agent 可见性。
 
 ### Blockers/Concerns
 
