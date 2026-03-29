@@ -126,6 +126,19 @@ def test_conf_schema_is_acp_only_contract():
     assert "opencode_path" not in items
 
 
+def test_conf_schema_uses_current_astrbot_supported_object_shapes_for_dynamic_mappings():
+    schema = json.loads((REPO_ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+    basic_items = schema["basic_config"]["items"]
+
+    acp_client_capabilities = basic_items["acp_client_capabilities"]
+    default_config_options = basic_items["default_config_options"]
+
+    assert acp_client_capabilities["type"] == "object"
+    assert acp_client_capabilities["items"] == {}
+    assert default_config_options["type"] == "object"
+    assert default_config_options["items"] == {}
+
+
 def test_session_defaults_keep_preference_and_live_state_separate():
     session_module = load_session_module()
     session = session_module.OpenCodeSession(
