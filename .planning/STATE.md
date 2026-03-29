@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-29)
 Phase: 02.1 (astrbot-phase-2) — EXECUTING
 Plan: 1 of 1
 Status: Phase complete — ready for verification
-Last activity: 2026-03-29
+Last activity: 2026-03-29 - Completed quick task 260329-suy: @metadata.yaml 中的插件名与身份才是最新的, 你需要把代码中与opencode有关的名称重新对齐
 
 Progress: [█████░░░░░] 50%
 
@@ -88,6 +88,12 @@ Recent decisions affecting current work:
 
 - Phase 3 需要保持 slash-command 的过程感，同时避免 IM 刷屏。
 - Phase 4 需要定稿 tool 返回 schema 与 permission 状态表达。
+
+### Quick Tasks Completed
+
+| #          | Description                                                                           | Date       | Commit  | Directory                                                                       |
+| ---------- | ------------------------------------------------------------------------------------- | ---------- | ------- | ------------------------------------------------------------------------------- |
+| 260329-suy | @metadata.yaml 中的插件名与身份才是最新的, 你需要把代码中与opencode有关的名称重新对齐 | 2026-03-29 | 5d1f4a5 | [260329-suy-metadata-yaml-opencode](./quick/260329-suy-metadata-yaml-opencode/) |
 
 ## Session Continuity
 
