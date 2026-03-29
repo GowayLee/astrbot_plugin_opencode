@@ -1,7 +1,7 @@
-plugin_id: astrbot_plugin_acp_client
-name: astrbot_plugin_acp_client
-display_name: ACP Client
-author: Hauryn Lee
-version: 1.3.0
+plugin_id: astrbot_plugin_opencode
+name: astrbot_plugin_opencode
+display_name: OpenCode Bridge
+author: GowayLee
+version: 1.3.1
 description: 让 AstrBot 通过 ACP 会话对接 OpenCode 智能体，在聊天中完成编程与文件任务。使用此插件，意味着你已知晓相关风险。
-repo: https://github.com/gowaylee/astrbot_plugin_opencode
+repo: https://github.com/GowayLee/astrbot_plugin_opencode

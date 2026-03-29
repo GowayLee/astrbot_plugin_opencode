@@ -48,7 +48,7 @@
 
 ## 快速开始
 
-1. 在插件配置中确认后端保持为 `acp_opencode`
+1. 确认插件列表中显示的是 `OpenCode Bridge`
 2. 默认启动命令保持 `acp_command=opencode`、`acp_args=["acp"]`
 3. 先发 `/oc 你好，你是谁`
 4. 再发 `/oc 当前工作目录是什么`
@@ -138,6 +138,26 @@
 2. 重启 AstrBot，让宿主重新读取当前插件目录中的 `metadata.yaml` 与 `_conf_schema.json`
 3. 核对 `data/config/` 下是否仍残留旧插件 ID 对应的配置文件，必要时清理旧实例后重新安装
 4. 回到 WebUI 检查插件名称、版本和配置字段是否已与本仓库一致
+
+### 真实宿主联调检查单
+
+完成升级、重装或重启后，建议在 AstrBot WebUI 里逐项确认：
+
+1. 插件列表中的名称为 **OpenCode Bridge**
+2. 插件版本显示为 **1.3.1**
+3. 配置面板只剩以下字段：
+   - `only_admin`
+   - `acp_command`
+   - `acp_args`
+   - `acp_startup_timeout`
+   - `work_dir`
+   - `proxy_url`
+   - `allow_file_writes`
+   - `auto_clean_interval`
+   - `confirm_timeout`
+4. 面板中不再出现这些旧字段：`backend_type`、`acp_client_capabilities`、`default_agent`、`default_mode`、`default_config_options`、输出配置、LLM 工具描述
+
+如果第 3 步与第 4 步不一致，请优先回到上面的“面板同步排查基线”重新核对插件目录、元数据与旧配置快照。
 
 ## 安全说明
 

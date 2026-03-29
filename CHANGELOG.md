@@ -12,10 +12,12 @@
 
 ### Changed
 
+- 插件元数据身份统一到 `astrbot_plugin_opencode / OpenCode Bridge`，修复 `metadata.yaml` 仍残留 `astrbot_plugin_acp_client / ACP Client` 导致宿主可能继续复用旧插件实例或旧配置快照的问题。
 - README、插件描述和用户可见说明已全部改写为 ACP-first 叙事，补充 `/oc-agent`、`/oc-mode`、权限确认流和会话绑定语义。
 - 配置说明同步为当前 WebUI 实际保留的高层字段，仅保留 `only_admin`、ACP 启动参数、默认工作目录、代理、文件写入开关、清理周期与确认超时。
 - 新增“面板同步排查基线”：明确 AstrBot 通过插件目录中的 `metadata.yaml` 识别插件，通过同目录 `_conf_schema.json` 生成配置面板，并把配置实体写入 `data/config/<plugin_name>_config.json`。
 - 升级说明补充旧面板排查路径，优先检查旧插件副本、旧插件 ID/显示名和宿主缓存是否仍在生效，避免把宿主加载问题误判为 schema 回退。
+- 新增真实宿主联调检查单，明确升级后应在 WebUI 中看到 `OpenCode Bridge`、版本 `1.3.1` 与 9 个当前 schema 字段。
 
 ## [1.3.0] - 2026-02-25
 

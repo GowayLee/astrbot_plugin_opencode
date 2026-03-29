@@ -28,12 +28,20 @@ from .core.executor import CommandExecutor
 from .core.output import OutputProcessor
 
 
+PLUGIN_ID = "astrbot_plugin_opencode"
+PLUGIN_DISPLAY_NAME = "OpenCode Bridge"
+PLUGIN_AUTHOR = "GowayLee"
+PLUGIN_DESCRIPTION = "让 AstrBot 通过 ACP 会话对接 OpenCode 智能体，在聊天中完成编程与文件任务。使用此插件，意味着你已知晓相关风险。"
+PLUGIN_VERSION = "1.3.1"
+PLUGIN_REPO = "https://github.com/GowayLee/astrbot_plugin_opencode"
+
+
 @register(
-    "astrbot_plugin_opencode",
-    "singularity2000",
-    "让 AstrBot 对接 OpenCode，通过自然语言远程指挥电脑干活。使用此插件，意味着你已知晓相关风险。",
-    "1.3.0",
-    "https://github.com/singularity2000/astrbot_plugin_opencode",
+    PLUGIN_ID,
+    PLUGIN_AUTHOR,
+    PLUGIN_DESCRIPTION,
+    PLUGIN_VERSION,
+    PLUGIN_REPO,
 )
 class OpenCodePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):

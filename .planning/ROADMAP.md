@@ -55,6 +55,24 @@ Plans:
 - [ ] 02-01-PLAN.md — 统一 slash-command 与 tool 的共享会话执行内核
 - [ ] 02-02-PLAN.md — 固化 /oc-new、/oc-end、/oc-session 的生命周期语义
 
+### Phase 02.1: AstrBot 实际加载环境中的配置面板同步与联调验证：先解决配置面板仍显示旧繁琐配置的问题，再回到 Phase 2 的真实运行环境验证 (INSERTED)
+
+**Goal**: 确认 AstrBot 宿主实际加载的是哪份插件元数据与配置 schema，修复导致旧配置面板持续显示的根因，并完成一轮真实环境联调闭环。
+**Requirements**: CONF-01, CONF-02, CONF-03, CONF-04, CONF-05
+**Depends on:** Phase 2
+**Success Criteria** (what must be TRUE):
+
+1. 可以明确说明 AstrBot 实际加载的是哪份插件目录、`metadata.yaml` 与 `_conf_schema.json`，不再靠猜测排查。
+2. WebUI 配置面板展示的字段与仓库当前精简后的 schema 一致，不再残留旧的协议级配置项。
+3. 如果问题来自插件标识、宿主缓存或升级路径，仓库里有对应修复或升级说明，后续可复现处理。
+4. 完成 Phase 2.1 后，可以带着已验证的宿主环境回到 Phase 2 的真实运行链路验证。
+
+**Plans:** 1/1 plans complete
+
+Plans:
+
+- [x] 02.1-01-PLAN.md — 定位宿主加载链路并修复配置面板未同步的根因
+
 ### Phase 3: 直接聊天交互体验
 
 **Goal**: 用户在 IM 中可以像直接操控 Coding Agent 一样发起任务、跟踪过程并完成必要确认。
@@ -88,11 +106,12 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4
+Phases execute in numeric order: 1 → 2 → 2.1 → 3 → 4
 
-| Phase                      | Plans Complete | Status      | Completed  |
-| -------------------------- | -------------- | ----------- | ---------- |
-| 1. 配置收敛与兼容迁移      | 1/1            | Implemented | 2026-03-29 |
-| 2. 会话内核与生命周期统一  | 2/2            | Complete    | 2026-03-29 |
-| 3. 直接聊天交互体验        | 0/TBD          | Not started | -          |
-| 4. Tool 回传与统一安全策略 | 0/TBD          | Not started | -          |
+| Phase                       | Plans Complete | Status      | Completed  |
+| --------------------------- | -------------- | ----------- | ---------- |
+| 1. 配置收敛与兼容迁移       | 1/1            | Implemented | 2026-03-29 |
+| 2. 会话内核与生命周期统一   | 2/2            | Complete    | 2026-03-29 |
+| 2.1. 配置面板同步与联调验证 | 1/1 | Complete   | 2026-03-29 |
+| 3. 直接聊天交互体验         | 0/TBD          | Not started | -          |
+| 4. Tool 回传与统一安全策略  | 0/TBD          | Not started | -          |

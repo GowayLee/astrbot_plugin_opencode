@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: ready-for-next-phase
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-03-29T10:12:38.660Z"
-last_activity: 2026-03-29 — 已完成 02-02，生命周期命令状态语义已统一
+status: verifying
+stopped_at: Completed 02.1-01-PLAN.md
+last_updated: "2026-03-29T11:52:40.839Z"
+last_activity: 2026-03-29
 progress:
-  total_phases: 4
-  completed_phases: 2
-  total_plans: 3
-  completed_plans: 3
-  percent: 100
+  total_phases: 5
+  completed_phases: 3
+  total_plans: 4
+  completed_plans: 4
+  percent: 50
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-29)
 
 **Core value:** 让 AstrBot 以自然、可控、低配置负担的方式接入 ACP Coding Agent，而不是把整套底层协议细节直接暴露给管理员和最终用户。
-**Current focus:** Phase 3 - 直接聊天交互体验
+**Current focus:** Phase 02.1 — astrbot-phase-2
 
 ## Current Position
 
-Phase: 2 of 4 (会话内核与生命周期统一)
-Plan: 2 of 2 in current phase
-Status: Phase 2 complete
-Last activity: 2026-03-29 — 已完成 02-02，生命周期命令状态语义已统一
+Phase: 02.1 (astrbot-phase-2) — EXECUTING
+Plan: 1 of 1
+Status: Phase complete — ready for verification
+Last activity: 2026-03-29
 
-Progress: [██████████] 100%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -46,14 +46,16 @@ Progress: [██████████] 100%
 | ----- | ----- | ----- | -------- |
 | 1     | 1     | n/a   | n/a      |
 | 2     | 2     | n/a   | n/a      |
+| 2.1   | 0     | n/a   | n/a      |
 
 **Recent Trend:**
 
-- Last 5 plans: 01-01, 02-01, 02-02
+- Last 5 plans: 01-01, 02-01, 02-02, 02.1-01(planned)
 - Trend: Stable
 
 | Phase 02 P01 | 1 min | 2 tasks | 6 files |
 | Phase 02 P02 | 5 min | 2 tasks | 3 files |
+| Phase 02.1 P01 | 4 min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -69,10 +71,17 @@ Recent decisions affecting current work:
 - [Phase 02]: 让 /oc 与 call_opencode_tool 共用执行准备与启动入口 — 统一 session ensure、permission 与后台启动语义，同时保持输出归属分离
 - [Phase 02]: 把 /oc-new、/oc-end 与 /oc-session 失败分支的状态说明收敛到同一套 lifecycle status renderer
 - [Phase 02]: 让 /oc-end 在没有 live backend session 时也返回当前 sender 状态，避免命令语义漂移
+- [Phase 02.1]: 把宿主加载问题首先归因到 metadata.yaml 与安装目录身份，而不是继续怀疑 _conf_schema.json 未更新。
+- [Phase 02.1]: 统一使用 astrbot_plugin_opencode / OpenCode Bridge / 1.3.1 作为插件对外身份，减少旧实例与旧配置快照复用风险。
+
+### Roadmap Evolution
+
+- Phase 2.1 inserted after Phase 2: AstrBot 实际加载环境中的配置面板同步与联调验证：先解决配置面板仍显示旧繁琐配置的问题，再回到 Phase 2 的真实运行环境验证。 (URGENT)
 
 ### Pending Todos
 
-- None - 当前 phase 已完成，等待 Phase 3 规划与执行。
+- 执行 02.1-01：确认 AstrBot 实际加载的是哪份插件元数据与 schema，并修复配置面板未同步的问题。
+- 完成 Phase 2.1 后，回到 Phase 2 verify，做真实运行环境验证。
 
 ### Blockers/Concerns
 
@@ -81,6 +90,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-29T10:12:38.658Z
-Stopped at: Completed 02-02-PLAN.md
+Last session: 2026-03-29T11:52:40.817Z
+Stopped at: Completed 02.1-01-PLAN.md
 Resume file: None
