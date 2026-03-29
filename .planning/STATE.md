@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: verifying
 stopped_at: Completed 02-04-PLAN.md
-last_updated: "2026-03-29T17:16:44.317Z"
+last_updated: "2026-03-29T17:52:14.207Z"
 last_activity: 2026-03-29
 progress:
   total_phases: 7
@@ -97,6 +97,7 @@ Recent decisions affecting current work:
 
 - session 对话已能创建，但消息回传链路似乎尚未实现；后续单独起一个 phase 设计并实现。
 - 简化 slash-command 与会话/sender 状态提示，减少聊天噪音，同时保留必要的会话绑定与 mode/agent 可见性。
+- 弄清楚 `/oc-mode` 所控制的 mode 代表什么，在 ACP 中的语义是什么，以及它在 OpenCode 上对应的具体能力边界。
 
 ### Blockers/Concerns
 
