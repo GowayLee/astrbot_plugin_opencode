@@ -107,6 +107,7 @@ class ACPNormalizedEvent:
 @dataclass(slots=True)
 class ACPSessionState:
     session_id: Optional[str]
+    work_dir: Optional[str]
     agent: Optional[ACPAgentInfo]
     mode: ACPModeView
     config_options: list[ACPConfigOption] = field(default_factory=list)

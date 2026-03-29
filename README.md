@@ -110,7 +110,6 @@
 | `work_dir`            | 默认工作目录             | (插件数据目录下的 workspace) |
 | `proxy_url`           | 代理地址                 | (空)                         |
 | `allow_file_writes`   | 是否允许文件写入类操作   | `true`                       |
-| `auto_clean_interval` | 自动清理间隔（分钟）     | `60`                         |
 | `confirm_timeout`     | 敏感操作确认超时（秒）   | `30`                         |
 
 > 注意：`backend_type`、`acp_client_capabilities`、`default_agent`、`default_mode`、`default_config_options`、输出配置、LLM 工具描述等运行时字段已经从 WebUI 面板移除，交由插件内部迁移逻辑补齐。若你仍在面板中看到这些字段，通常说明宿主加载的不是当前仓库对应的插件副本，或旧实例缓存尚未刷新。
@@ -153,7 +152,6 @@
    - `work_dir`
    - `proxy_url`
    - `allow_file_writes`
-   - `auto_clean_interval`
    - `confirm_timeout`
 4. 面板中不再出现这些旧字段：`backend_type`、`acp_client_capabilities`、`default_agent`、`default_mode`、`default_config_options`、输出配置、LLM 工具描述
 

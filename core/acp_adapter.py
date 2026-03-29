@@ -91,6 +91,9 @@ class OpenCodeACPAdapter:
             session_id=self._as_optional_str(
                 session_payload.get("sessionId") or session_payload.get("id")
             ),
+            work_dir=self._as_optional_str(
+                session_payload.get("cwd") or session_payload.get("workdir")
+            ),
             agent=self.normalize_agent(session_payload.get("agent")),
             mode=self.extract_mode_view(
                 config_options=config_options_payload,

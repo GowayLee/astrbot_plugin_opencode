@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-03-29T17:03:06.918Z"
+status: verifying
+stopped_at: Completed 02-04-PLAN.md
+last_updated: "2026-03-29T17:16:44.317Z"
 last_activity: 2026-03-29
 progress:
   total_phases: 7
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 7
-  completed_plans: 8
-  percent: 50
+  completed_plans: 9
+  percent: 57
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-03-29)
 
 ## Current Position
 
-Phase: 02 (会话内核与生命周期统一) — EXECUTING
-Plan: 2 of 2
-Status: Ready to execute
+Phase: 02.2
+Plan: Not started
+Status: Phase 02.1 complete — ready for Phase 02.2
 Last activity: 2026-03-29
 
-Progress: [█████░░░░░] 50%
+Progress: [██████░░░░] 57%
 
 ## Performance Metrics
 
@@ -46,12 +46,12 @@ Progress: [█████░░░░░] 50%
 | ----- | ----- | ----- | -------- |
 | 1     | 1     | n/a   | n/a      |
 | 2     | 2     | n/a   | n/a      |
-| 2.1   | 0     | n/a   | n/a      |
+| 2.1   | 1     | n/a   | n/a      |
 
 **Recent Trend:**
 
-- Last 5 plans: 01-01, 02-01, 02-02, 02.1-01(planned)
-- Trend: Stable
+- Last 5 plans: 01-01, 02-01, 02-02, 02.1-01(completed)
+  - Trend: Stable
 
 | Phase 02 P01 | 1 min | 2 tasks | 6 files |
 | Phase 02 P02 | 5 min | 2 tasks | 3 files |
@@ -59,6 +59,7 @@ Progress: [█████░░░░░] 50%
 | Phase 02.3-acp-opencode-invalid-params P01 | 1 min | 2 tasks | 5 files |
 | Phase 02.3 P02 | 2 min | 2 tasks | 4 files |
 | Phase 02 P03 | 1 min | 2 tasks | 4 files |
+| Phase 02 P04 | 8 min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -82,7 +83,9 @@ Recent decisions affecting current work:
 - [Phase 02.3]: 先在 executor 里统一解包 params.update，再把 sessionUpdate 映射回现有 event.type，保持 output pipeline 不变。
 - [Phase 02.3]: 把 ACP v1 的 modes 对象与 agentCapabilities 在 adapter 层归一化，避免状态消费分散到上层调用点。
 - [Phase 02]: bind_backend_session 只表示历史绑定，真正进入当前连接 live 状态要靠显式标记。
-- [Phase 02]: _ensure_session_ready 优先直通 live 会话，只有历史绑定才尝试 session/load。
+- [Phase 02]: \_ensure_session_ready 优先直通 live 会话，只有历史绑定才尝试 session/load。
+- [Phase 02]: 把历史会话恢复的 sessionId 校验放在 executor.load_session 内部
+- [Phase 02]: /oc-session 先在临时 probe session 上验证恢复结果，再提交 sender 绑定
 
 ### Roadmap Evolution
 
@@ -92,8 +95,6 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-- 执行 02.1-01：确认 AstrBot 实际加载的是哪份插件元数据与 schema，并修复配置面板未同步的问题。
-- 完成 Phase 2.1 后，回到 Phase 2 verify，做真实运行环境验证。
 - session 对话已能创建，但消息回传链路似乎尚未实现；后续单独起一个 phase 设计并实现。
 - 简化 slash-command 与会话/sender 状态提示，减少聊天噪音，同时保留必要的会话绑定与 mode/agent 可见性。
 
@@ -110,6 +111,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-29T17:03:06.912Z
-Stopped at: Completed 02-03-PLAN.md
+Last session: 2026-03-29T17:10:08.877Z
+Stopped at: Completed 02-04-PLAN.md
 Resume file: None

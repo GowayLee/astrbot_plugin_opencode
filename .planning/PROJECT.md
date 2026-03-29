@@ -17,6 +17,7 @@
 - ✓ 插件已经具备基础安全前置检查、运行时权限确认、工作目录历史记录和临时文件清理能力 — existing
 - ✓ 插件已经支持将 ACP 能力作为 AstrBot LLM tool 暴露给上层 Agent 调用 — existing
 - ✓ 插件已经实现配置驱动的输出链路，包括摘要、全文、TXT、长图与进度事件折叠 — existing
+- ✓ 已验证 slash-command 与 tool 共用同一套执行内核，同时保持会话生命周期与输出语义可预期 — Validated in Phase 02: 会话内核与生命周期统一
 
 ### Active
 
@@ -41,6 +42,10 @@
 
 代码库映射显示，当前 `main.py` 仍然承担大量命令编排、状态渲染、权限确认和后台执行逻辑；`call_opencode_tool` 目前直接后台推送消息给用户，这与目标中的“tool 输出先回到上层 Agent”不一致。与此同时，`_conf_schema.json` 仍然保留了较多协议级和实现细节级配置，后续需要把面板重新整理为更少、更稳的高层配置项。
 
+## Current State
+
+Phase 02 已完成并通过验证：共享执行内核、会话延续、历史会话恢复与 `/oc-new`、`/oc-end`、`/oc-session` 的生命周期语义已经收敛到一致行为，后续重点转向配置面板同步与真实宿主环境联调。
+
 ## Constraints
 
 - **Transport**: 保持本地 `stdio` ACP 执行模型 — 本轮不引入远程 ACP 连接或新的传输抽象
@@ -62,4 +67,4 @@
 
 ---
 
-_Last updated: 2026-03-29 after initialization_
+_Last updated: 2026-03-29 after Phase 02 completion_

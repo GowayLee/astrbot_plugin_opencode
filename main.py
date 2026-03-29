@@ -588,6 +588,35 @@ class OpenCodePlugin(Star):
 
         return True, ""
 
+    def _make_history_probe_session(self, session):
+        return type(session)(
+            work_dir=session.work_dir,
+            env=dict(session.env),
+            backend_kind=session.backend_kind,
+            default_agent=session.default_agent,
+            default_mode=session.default_mode,
+            default_config_options=dict(session.default_config_options or {}),
+        )
+
+    def _commit_loaded_history_session(self, target_session, loaded_session) -> None:
+        target_session.work_dir = loaded_session.work_dir
+        target_session.backend_session_id = loaded_session.backend_session_id
+        target_session.backend_session_live = loaded_session.backend_session_live
+        target_session.protocol_version = loaded_session.protocol_version
+        target_session.agent_name = loaded_session.agent_name
+        target_session.agent_title = loaded_session.agent_title
+        target_session.available_agents = list(loaded_session.available_agents)
+        target_session.current_mode_id = loaded_session.current_mode_id
+        target_session.config_options = list(loaded_session.config_options)
+        target_session.current_config_values = dict(
+            loaded_session.current_config_values
+        )
+        target_session.available_modes = list(loaded_session.available_modes)
+        target_session.available_commands = list(loaded_session.available_commands)
+        target_session.session_capabilities = dict(loaded_session.session_capabilities)
+        target_session.pending_permission = loaded_session.pending_permission
+        target_session.prompt_running = loaded_session.prompt_running
+
     def _get_send_page_size(self) -> int:
         return 50
 
@@ -1272,8 +1301,9 @@ class OpenCodePlugin(Star):
             yield event.plain_result(error_message)
             return
 
-        session.bind_backend_session(target_session["id"])
-        loaded = await self.executor.load_session(session)
+        probe_session = self._make_history_probe_session(session)
+        probe_session.bind_backend_session(target_session["id"])
+        loaded = await self.executor.load_session(probe_session)
         if not loaded.ok:
             session.reset_live_session()
             yield event.plain_result(
@@ -1285,11 +1315,13 @@ class OpenCodePlugin(Star):
             )
             return
 
+        self._commit_loaded_history_session(session, probe_session)
+
         lines = [
             "✅ 已绑定 ACP 会话。",
             f"📝 标题: {target_session['title']}",
             f"🔑 ID: {target_session['id']}",
-            f"📂 当前工作目录保持: {session.work_dir}",
+            f"📂 已同步到历史会话工作目录: {session.work_dir}",
         ]
         lines.extend(self._render_live_state_lines(session, include_defaults=True))
         yield event.plain_result("\n".join(lines))

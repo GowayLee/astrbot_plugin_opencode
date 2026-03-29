@@ -474,28 +474,26 @@ class CommandExecutor:
                         }
                     )
                 except (ACPTransportError, ACPError) as exc:
-                    session.drop_backend_session()
-                    self.logger.warning(
-                        f"ACP session recovery failed for {stale_session_id}: {exc}"
+                    return await self._handle_load_session_failure(
+                        session=session,
+                        session_id=stale_session_id,
+                        message=f"ACP load session failed: {exc}",
+                        allow_recreate_after_load_failure=allow_recreate_after_load_failure,
                     )
-                    if not allow_recreate_after_load_failure:
-                        return SessionEnsureResult(
-                            ok=False,
-                            error=ExecutionResult(
-                                ok=False,
-                                error_type="acp_load_session_failed",
-                                message=f"ACP load session failed: {exc}",
-                                session_id=stale_session_id,
-                            ),
-                        )
-                    created = await self._create_session(session)
-                    created.recovered_session = False
-                    created.session_recovery_failed = True
-                    return SessionEnsureResult(
-                        ok=created.ok,
-                        error=None if created.ok else created,
-                        recovered_session=False,
-                        session_recovery_failed=created.ok,
+
+                normalized = self.adapter.normalize_session_state(
+                    self._unwrap_session_payload(response)
+                )
+                if normalized.session_id != stale_session_id:
+                    actual_session_id = normalized.session_id or "missing"
+                    return await self._handle_load_session_failure(
+                        session=session,
+                        session_id=stale_session_id,
+                        message=(
+                            "ACP load session failed: expected "
+                            f"{stale_session_id}, got {actual_session_id}"
+                        ),
+                        allow_recreate_after_load_failure=allow_recreate_after_load_failure,
                     )
 
                 self._apply_session_state(session, response)
@@ -517,6 +515,38 @@ class CommandExecutor:
         if not created.ok:
             return SessionEnsureResult(ok=False, error=created)
         return SessionEnsureResult(ok=True)
+
+    async def _handle_load_session_failure(
+        self,
+        session: OpenCodeSession,
+        session_id: Optional[str],
+        message: str,
+        allow_recreate_after_load_failure: bool,
+    ) -> SessionEnsureResult:
+        session.drop_backend_session()
+        self.logger.warning(
+            f"ACP session recovery failed for {session_id or 'unknown'}: {message}"
+        )
+        if not allow_recreate_after_load_failure:
+            return SessionEnsureResult(
+                ok=False,
+                error=ExecutionResult(
+                    ok=False,
+                    error_type="acp_load_session_failed",
+                    message=message,
+                    session_id=session_id,
+                ),
+            )
+
+        created = await self._create_session(session)
+        created.recovered_session = False
+        created.session_recovery_failed = True
+        return SessionEnsureResult(
+            ok=created.ok,
+            error=None if created.ok else created,
+            recovered_session=False,
+            session_recovery_failed=created.ok,
+        )
 
     async def _create_session(self, session: OpenCodeSession) -> ExecutionResult:
         payload: dict[str, Any] = {"cwd": session.work_dir, "mcpServers": []}
@@ -552,6 +582,8 @@ class CommandExecutor:
         if normalized.session_id:
             session.backend_session_id = normalized.session_id
             session.mark_backend_session_live()
+        if normalized.work_dir:
+            session.work_dir = normalized.work_dir
         if "agent" in payload:
             session.agent_name = normalized.agent.name if normalized.agent else None
             session.agent_title = normalized.agent.title if normalized.agent else None
