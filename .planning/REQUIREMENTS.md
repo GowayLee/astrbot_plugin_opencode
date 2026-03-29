@@ -33,6 +33,14 @@
 - [x] **SESS-02**: 用户在执行 `/oc-new`、`/oc-end`、`/oc-session` 等生命周期命令后，可以得到一致且可预期的会话行为
 - [x] **SESS-03**: slash-command 与 tool 调用可以复用同一套执行内核，但不会混淆彼此的输出语义或状态流
 
+### ACP v1 Invalid Params Repair
+
+- [x] **PHASE-02.3-01**: 插件发给 `opencode acp` 的 `initialize` 请求必须符合 ACP v1，包含 `protocolVersion`、`clientCapabilities` 与完整 `clientInfo.version`
+- [x] **PHASE-02.3-02**: 插件发给 `session/new` 与 `session/load` 的 payload 必须显式携带 `mcpServers: []`，避免 OpenCode 因缺少必填字段拒绝会话建立或恢复
+- [x] **PHASE-02.3-03**: 插件发给 `session/prompt` 的正式字段必须是 ACP v1 `prompt` 数组，而不是仓库旧字段 `contentBlocks`
+- [x] **PHASE-02.3-04**: initialize 返回的 `agentCapabilities`、session state 的 mode/config 结构，以及 `session/update` 通知都必须被当前执行链正确消费，不再丢失恢复、mode、权限和过程消息
+- [ ] **PHASE-02.3-05**: 在真实 AstrBot 宿主中执行 `/oc hello` 与 `/oc-session` 时，不再出现 `ACP 后端启动失败: opencode` 包裹的 `Invalid params`
+
 ### Safety And Permissions
 
 - [ ] **SAFE-01**: 当管理员关闭文件写入能力时，插件会稳定阻止对应写入路径，而不是只改变提示文案
@@ -69,35 +77,40 @@
 
 Which phases cover which requirements. Updated during roadmap creation.
 
-| Requirement | Phase   | Status  |
-| ----------- | ------- | ------- |
-| CONF-01     | Phase 1 | Done    |
-| CONF-02     | Phase 1 | Done    |
-| CONF-03     | Phase 1 | Done    |
-| CONF-04     | Phase 1 | Done    |
-| CONF-05     | Phase 1 | Done    |
-| CHAT-01     | Phase 3 | Pending |
-| CHAT-02     | Phase 3 | Pending |
-| CHAT-03     | Phase 3 | Pending |
-| CHAT-04     | Phase 3 | Pending |
-| CHAT-05     | Phase 3 | Pending |
-| TOOL-01     | Phase 4 | Pending |
-| TOOL-02     | Phase 4 | Pending |
-| TOOL-03     | Phase 4 | Pending |
-| SESS-01     | Phase 2 | Complete |
-| SESS-02     | Phase 2 | Complete |
-| SESS-03     | Phase 2 | Complete |
-| SAFE-01     | Phase 4 | Pending |
-| SAFE-02     | Phase 3 | Pending |
-| SAFE-03     | Phase 4 | Pending |
+| Requirement   | Phase      | Status               |
+| ------------- | ---------- | -------------------- |
+| CONF-01       | Phase 1    | Done                 |
+| CONF-02       | Phase 1    | Done                 |
+| CONF-03       | Phase 1    | Done                 |
+| CONF-04       | Phase 1    | Done                 |
+| CONF-05       | Phase 1    | Done                 |
+| CHAT-01       | Phase 3    | Pending              |
+| CHAT-02       | Phase 3    | Pending              |
+| CHAT-03       | Phase 3    | Pending              |
+| CHAT-04       | Phase 3    | Pending              |
+| CHAT-05       | Phase 3    | Pending              |
+| TOOL-01       | Phase 4    | Pending              |
+| TOOL-02       | Phase 4    | Pending              |
+| TOOL-03       | Phase 4    | Pending              |
+| SESS-01       | Phase 2    | Complete             |
+| SESS-02       | Phase 2    | Complete             |
+| SESS-03       | Phase 2    | Complete             |
+| PHASE-02.3-01 | Phase 02.3 | Complete             |
+| PHASE-02.3-02 | Phase 02.3 | Complete             |
+| PHASE-02.3-03 | Phase 02.3 | Complete             |
+| PHASE-02.3-04 | Phase 02.3 | Complete             |
+| PHASE-02.3-05 | Phase 02.3 | In manual validation |
+| SAFE-01       | Phase 4    | Pending              |
+| SAFE-02       | Phase 3    | Pending              |
+| SAFE-03       | Phase 4    | Pending              |
 
 **Coverage:**
 
-- v1 requirements: 19 total
-- Mapped to phases: 19
+- v1 requirements: 24 total
+- Mapped to phases: 24
 - Unmapped: 0 ✓
 
 ---
 
 _Requirements defined: 2026-03-29_
-_Last updated: 2026-03-29 after roadmap creation_
+_Last updated: 2026-03-29 after Phase 02.3 gap closure planning_

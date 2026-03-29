@@ -35,6 +35,7 @@ class OpenCodeSession:
 
     def _reset_runtime_state(self):
         """清空仅属于当前 live runtime 的派生状态。"""
+        self.backend_session_live = False
         self.protocol_version: Optional[Any] = None
         self.agent_name: Optional[str] = None
         self.agent_title: Optional[str] = None
@@ -58,11 +59,19 @@ class OpenCodeSession:
 
     def set_backend_session_id(self, session_id: str):
         """设置后端 session ID"""
-        self.backend_session_id = session_id
+        self.bind_backend_session(session_id)
 
     def clear_backend_session_id(self):
         """清除后端 session ID"""
-        self.backend_session_id = None
+        self.drop_backend_session()
+
+    @property
+    def has_bound_backend_session(self) -> bool:
+        return bool(self.backend_session_id)
+
+    @property
+    def has_live_backend_session(self) -> bool:
+        return bool(self.backend_session_id and self.backend_session_live)
 
     def drop_backend_session(self):
         """丢弃当前后端绑定及其 live 状态，但保留工作目录和默认偏好。"""
@@ -73,6 +82,11 @@ class OpenCodeSession:
         """绑定历史会话，并清理旧的 live 状态"""
         self._reset_runtime_state()
         self.backend_session_id = session_id
+
+    def mark_backend_session_live(self):
+        """把当前已绑定的后端会话标记为当前连接中的 live 会话。"""
+        if self.backend_session_id:
+            self.backend_session_live = True
 
     def reset_live_session(self):
         """清空当前 live 会话状态，但保留默认偏好和工作目录"""

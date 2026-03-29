@@ -137,6 +137,21 @@ def test_session_state_reads_modes_object_and_agent_capabilities_from_acp_v1_pay
     assert session_state.capabilities == {"imageInput": True}
 
 
+def test_session_state_normalizes_history_workdir_from_cwd_or_workdir_fields():
+    adapter_module = load_acp_module("acp_adapter")
+    adapter = adapter_module.OpenCodeACPAdapter()
+
+    from_cwd = adapter.normalize_session_state(
+        session_payload={"sessionId": "ses_cwd", "cwd": "/tmp/from-cwd"}
+    )
+    from_workdir = adapter.normalize_session_state(
+        session_payload={"sessionId": "ses_workdir", "workdir": "/tmp/from-workdir"}
+    )
+
+    assert from_cwd.work_dir == "/tmp/from-cwd"
+    assert from_workdir.work_dir == "/tmp/from-workdir"
+
+
 def test_config_option_semantics_are_explicit_for_mode_and_model():
     adapter_module = load_acp_module("acp_adapter")
     adapter = adapter_module.OpenCodeACPAdapter()

@@ -48,12 +48,14 @@ Plans:
 2. 用户执行 `/oc-new`、`/oc-end`、`/oc-session` 后，会话创建、结束、切换的结果与提示保持一致且可预期。
 3. slash-command 与 tool 调用基于同一套执行内核运行，但不会出现会话状态串线或输出语义混淆。
 
-**Plans:** 1/2 plans executed
+**Plans:** 2/4 plans executed
 
 Plans:
 
-- [ ] 02-01-PLAN.md — 统一 slash-command 与 tool 的共享会话执行内核
-- [ ] 02-02-PLAN.md — 固化 /oc-new、/oc-end、/oc-session 的生命周期语义
+- [x] 02-01-PLAN.md — 统一 slash-command 与 tool 的共享会话执行内核
+- [x] 02-02-PLAN.md — 固化 /oc-new、/oc-end、/oc-session 的生命周期语义
+- [x] 02-03-PLAN.md — 修正 live 会话续用与坏历史绑定恢复语义
+- [ ] 02-04-PLAN.md — 收紧 /oc-session 的历史绑定校验与目录同步
 
 ### Phase 02.3: 分析并修复 ACP 后端启动失败: opencode Invalid params (INSERTED)
 
@@ -67,7 +69,7 @@ Plans:
 3. initialize 返回的 `agentCapabilities`、session payload 的 mode/config 结构、以及 `session/update` 通知都能被当前执行链正确消费，不再丢失恢复、mode、权限和过程消息。
 4. 在真实宿主中执行 `/oc hello` 与 `/oc-session` 时，不再出现 `ACP 后端启动失败: opencode` 包裹的 `Invalid params`。
 
-**Plans:** 2/2 plans complete
+**Plans:** 3/2 plans complete
 
 Plans:
 

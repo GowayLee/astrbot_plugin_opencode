@@ -260,6 +260,14 @@ class FakeExecutor:
             session.current_config_values = dict(
                 payload.get("current_config_values", {})
             )
+            session_id = payload.get("session_id") or payload.get("sessionId")
+            if session_id:
+                session.backend_session_id = session_id
+            work_dir = (
+                payload.get("work_dir") or payload.get("cwd") or payload.get("workdir")
+            )
+            if work_dir:
+                session.work_dir = work_dir
         return self.load_session_result
 
     async def set_config_option(self, session, option_id, value):
@@ -743,6 +751,63 @@ def test_oc_session_lists_and_binds_backend_sessions(tmp_path):
     assert "ses_1" in "\n".join(list_outputs)
     assert session.backend_session_id == "ses_2"
     assert any("已绑定" in output or "已切换" in output for output in bind_outputs)
+
+
+def test_oc_session_syncs_sender_workdir_after_history_bind_success(tmp_path):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+    session = plugin.session_mgr.get_or_create_session(
+        "alice", custom_work_dir=str(tmp_path / "current")
+    )
+    history_dir = tmp_path / "history"
+    plugin.executor.sessions_result = FakeExecutionResult(
+        items=[{"sessionId": "ses_2", "title": "第二条"}]
+    )
+    plugin.executor.load_session_result = FakeExecutionResult(
+        ok=True,
+        payload={
+            "sessionId": "ses_2",
+            "cwd": str(history_dir),
+            "agent_name": "plan",
+            "current_mode_id": "code",
+        },
+    )
+
+    outputs = asyncio.run(
+        collect(plugin.oc_session(FakeEvent(message_str="/oc-session 1"), "1"))
+    )
+
+    assert session.backend_session_id == "ses_2"
+    assert session.work_dir == str(history_dir)
+    assert any("已同步到历史会话工作目录" in output for output in outputs)
+    assert any(str(history_dir) in output for output in outputs)
+
+
+def test_oc_session_failed_history_bind_keeps_sender_unbound(tmp_path):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+    session = plugin.session_mgr.get_or_create_session(
+        "alice", custom_work_dir=str(tmp_path / "current")
+    )
+    original_work_dir = session.work_dir
+    plugin.executor.sessions_result = FakeExecutionResult(
+        items=[{"sessionId": "ses_missing", "title": "坏会话"}]
+    )
+    plugin.executor.load_session_result = FakeExecutionResult(
+        ok=False,
+        message="恢复结果未命中目标会话",
+    )
+
+    outputs = asyncio.run(
+        collect(
+            plugin.oc_session(
+                FakeEvent(message_str="/oc-session ses_missing"), "ses_missing"
+            )
+        )
+    )
+
+    assert session.backend_session_id is None
+    assert session.work_dir == original_work_dir
+    assert any("绑定历史会话失败" in output for output in outputs)
+    assert any("当前会话: 未绑定" in output for output in outputs)
 
 
 def test_oc_end_clears_live_session_but_keeps_preferences(tmp_path):

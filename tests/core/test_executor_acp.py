@@ -343,6 +343,57 @@ def test_executor_explicit_load_session_does_not_fallback_to_new_session_on_fail
     assert [call[0] for call in fake_client.calls] == ["initialize", "session/load"]
 
 
+def test_executor_explicit_load_session_fails_closed_when_payload_has_no_session_id():
+    executor_module, executor, session, input_module = make_executor_and_session()
+    session.bind_backend_session("ses_missing")
+    session.pending_permission = {"id": "perm_1"}
+    session.prompt_running = True
+    fake_client = FakeClient(
+        responses={
+            "initialize": {
+                "protocolVersion": 1,
+                "agentCapabilities": {"loadSession": True},
+            },
+            "session/load": {"agent": {"name": "plan", "title": "Plan"}},
+        }
+    )
+    executor._client = fake_client
+
+    result = asyncio.run(executor.load_session(session))
+
+    assert result.ok is False
+    assert result.error_type == "acp_load_session_failed"
+    assert session.backend_session_id is None
+    assert session.pending_permission is None
+    assert session.prompt_running is False
+    assert [call[0] for call in fake_client.calls] == ["initialize", "session/load"]
+
+
+def test_executor_explicit_load_session_fails_closed_when_payload_session_id_mismatches_target():
+    executor_module, executor, session, input_module = make_executor_and_session()
+    session.bind_backend_session("ses_target")
+    fake_client = FakeClient(
+        responses={
+            "initialize": {
+                "protocolVersion": 1,
+                "agentCapabilities": {"loadSession": True},
+            },
+            "session/load": {
+                "sessionId": "ses_other",
+                "agent": {"name": "plan", "title": "Plan"},
+            },
+        }
+    )
+    executor._client = fake_client
+
+    result = asyncio.run(executor.load_session(session))
+
+    assert result.ok is False
+    assert result.error_type == "acp_load_session_failed"
+    assert session.backend_session_id is None
+    assert [call[0] for call in fake_client.calls] == ["initialize", "session/load"]
+
+
 def test_health_check_reports_unhealthy_when_acp_command_cannot_start():
     executor_module = load_core_module("executor")
     executor = executor_module.CommandExecutor(

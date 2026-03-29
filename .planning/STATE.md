@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 02.3-02-PLAN.md
-last_updated: "2026-03-29T16:35:43.987Z"
+status: executing
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-03-29T17:03:06.918Z"
 last_activity: 2026-03-29
 progress:
   total_phases: 7
-  completed_phases: 2
-  total_plans: 5
-  completed_plans: 7
+  completed_phases: 3
+  total_plans: 7
+  completed_plans: 8
   percent: 50
 ---
 
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-29)
 
 **Core value:** 让 AstrBot 以自然、可控、低配置负担的方式接入 ACP Coding Agent，而不是把整套底层协议细节直接暴露给管理员和最终用户。
-**Current focus:** Phase 3 — 直接聊天交互体验
+**Current focus:** Phase 02 — 会话内核与生命周期统一
 
 ## Current Position
 
-Phase: 3
-Plan: Not started
-Status: Not started
+Phase: 02 (会话内核与生命周期统一) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
 Last activity: 2026-03-29
 
 Progress: [█████░░░░░] 50%
@@ -58,6 +58,7 @@ Progress: [█████░░░░░] 50%
 | Phase 02.1 P01 | 4 min | 3 tasks | 5 files |
 | Phase 02.3-acp-opencode-invalid-params P01 | 1 min | 2 tasks | 5 files |
 | Phase 02.3 P02 | 2 min | 2 tasks | 4 files |
+| Phase 02 P03 | 1 min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,8 @@ Recent decisions affecting current work:
 - [Phase 02.3-acp-opencode-invalid-params]: prompt 输入在 executor 层统一归一化为 prompt 数组，同时保留 text 仅作本地兼容辅助。
 - [Phase 02.3]: 先在 executor 里统一解包 params.update，再把 sessionUpdate 映射回现有 event.type，保持 output pipeline 不变。
 - [Phase 02.3]: 把 ACP v1 的 modes 对象与 agentCapabilities 在 adapter 层归一化，避免状态消费分散到上层调用点。
+- [Phase 02]: bind_backend_session 只表示历史绑定，真正进入当前连接 live 状态要靠显式标记。
+- [Phase 02]: _ensure_session_ready 优先直通 live 会话，只有历史绑定才尝试 session/load。
 
 ### Roadmap Evolution
 
@@ -107,6 +110,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-29T15:04:19.628Z
-Stopped at: Completed 02.3-02-PLAN.md
+Last session: 2026-03-29T17:03:06.912Z
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None

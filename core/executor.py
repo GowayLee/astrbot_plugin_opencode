@@ -459,18 +459,21 @@ class CommandExecutor:
             getattr(client, "protocol_capabilities", {}).get("loadSession")
         )
 
-        if session.backend_session_id:
+        if session.has_live_backend_session:
+            return SessionEnsureResult(ok=True)
+
+        if session.has_bound_backend_session:
+            stale_session_id = session.backend_session_id
             if load_supported:
                 try:
                     response = await client.load_session(
                         {
-                            "sessionId": session.backend_session_id,
+                            "sessionId": stale_session_id,
                             "cwd": session.work_dir,
                             "mcpServers": [],
                         }
                     )
                 except (ACPTransportError, ACPError) as exc:
-                    stale_session_id = session.backend_session_id
                     session.drop_backend_session()
                     self.logger.warning(
                         f"ACP session recovery failed for {stale_session_id}: {exc}"
@@ -499,6 +502,16 @@ class CommandExecutor:
                 return SessionEnsureResult(ok=True, recovered_session=True)
 
             session.drop_backend_session()
+            if not allow_recreate_after_load_failure:
+                return SessionEnsureResult(
+                    ok=False,
+                    error=ExecutionResult(
+                        ok=False,
+                        error_type="acp_load_session_failed",
+                        message="ACP load session failed: backend does not support session recovery",
+                        session_id=stale_session_id,
+                    ),
+                )
 
         created = await self._create_session(session)
         if not created.ok:
@@ -538,6 +551,7 @@ class CommandExecutor:
         normalized = self.adapter.normalize_session_state(payload)
         if normalized.session_id:
             session.backend_session_id = normalized.session_id
+            session.mark_backend_session_live()
         if "agent" in payload:
             session.agent_name = normalized.agent.name if normalized.agent else None
             session.agent_title = normalized.agent.title if normalized.agent else None
