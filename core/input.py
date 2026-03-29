@@ -34,7 +34,7 @@ class ACPPromptPayload(str):
     def to_payload(self) -> dict:
         return {
             "text": self.text,
-            "contentBlocks": copy.deepcopy(self.content_blocks),
+            "prompt": copy.deepcopy(self.content_blocks),
             **copy.deepcopy(self.metadata),
         }
 

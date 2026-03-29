@@ -54,11 +54,14 @@ class ACPClient:
         client_info: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         params = {
-            "capabilities": dict(client_capabilities or {}),
+            "protocolVersion": 1,
+            "clientCapabilities": dict(client_capabilities or {}),
             "clientInfo": dict(client_info or {}),
         }
         response = await self.request("initialize", params)
-        self.protocol_capabilities = dict(response.get("capabilities") or {})
+        self.protocol_capabilities = dict(
+            response.get("agentCapabilities") or response.get("capabilities") or {}
+        )
         self.protocol_info = dict(response)
         self._initialized = True
         return response

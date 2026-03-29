@@ -89,7 +89,9 @@ class FakeClient:
         if self.initialize_error:
             raise self.initialize_error
         payload = dict(self.responses.get("initialize") or {})
-        self.protocol_capabilities = dict(payload.get("capabilities") or {})
+        self.protocol_capabilities = dict(
+            payload.get("agentCapabilities") or payload.get("capabilities") or {}
+        )
         self.initialized = True
         return payload
 
@@ -160,7 +162,10 @@ def test_executor_creates_session_then_prompts():
     executor_module, executor, session, input_module = make_executor_and_session()
     fake_client = FakeClient(
         responses={
-            "initialize": {"protocolVersion": 1, "capabilities": {"loadSession": True}},
+            "initialize": {
+                "protocolVersion": 1,
+                "agentCapabilities": {"loadSession": True},
+            },
             "session/new": {
                 "sessionId": "ses_123",
                 "agent": {"name": "build", "title": "Build"},
@@ -176,7 +181,7 @@ def test_executor_creates_session_then_prompts():
 
     result = asyncio.run(
         executor.run_prompt(
-            {"contentBlocks": [{"type": "text", "text": "你好"}]},
+            {"prompt": [{"type": "text", "text": "你好"}]},
             session,
         )
     )
@@ -190,7 +195,14 @@ def test_executor_creates_session_then_prompts():
         "session/new",
         "session/prompt",
     ]
+    assert fake_client.calls[0][2] == {
+        "name": "astrbot_plugin_acp",
+        "title": "ACP Client",
+        "version": "1.3.1",
+    }
     assert fake_client.calls[1][1]["cwd"] == "/tmp/acp-demo"
+    assert fake_client.calls[1][1]["mcpServers"] == []
+    assert fake_client.calls[2][1]["prompt"] == [{"type": "text", "text": "你好"}]
 
 
 def test_executor_loads_existing_session_when_backend_supports_recovery():
@@ -198,7 +210,10 @@ def test_executor_loads_existing_session_when_backend_supports_recovery():
     session.backend_session_id = "ses_existing"
     fake_client = FakeClient(
         responses={
-            "initialize": {"protocolVersion": 1, "capabilities": {"loadSession": True}},
+            "initialize": {
+                "protocolVersion": 1,
+                "agentCapabilities": {"loadSession": True},
+            },
             "session/load": {
                 "sessionId": "ses_existing",
                 "agent": {"name": "plan", "title": "Plan"},
@@ -214,7 +229,7 @@ def test_executor_loads_existing_session_when_backend_supports_recovery():
 
     result = asyncio.run(
         executor.run_prompt(
-            {"contentBlocks": [{"type": "text", "text": "继续"}]},
+            {"prompt": [{"type": "text", "text": "继续"}]},
             session,
         )
     )
@@ -229,7 +244,9 @@ def test_executor_loads_existing_session_when_backend_supports_recovery():
     assert fake_client.calls[1][1] == {
         "sessionId": "ses_existing",
         "cwd": "/tmp/acp-demo",
+        "mcpServers": [],
     }
+    assert fake_client.calls[2][1]["prompt"] == [{"type": "text", "text": "继续"}]
 
 
 def test_executor_exposes_public_load_session_entry():
@@ -237,7 +254,10 @@ def test_executor_exposes_public_load_session_entry():
     session.backend_session_id = "ses_existing"
     fake_client = FakeClient(
         responses={
-            "initialize": {"protocolVersion": 1, "capabilities": {"loadSession": True}},
+            "initialize": {
+                "protocolVersion": 1,
+                "agentCapabilities": {"loadSession": True},
+            },
             "session/load": {
                 "sessionId": "ses_existing",
                 "agent": {"name": "plan", "title": "Plan"},
@@ -253,6 +273,11 @@ def test_executor_exposes_public_load_session_entry():
     assert result.recovered_session is True
     assert session.backend_session_id == "ses_existing"
     assert [call[0] for call in fake_client.calls] == ["initialize", "session/load"]
+    assert fake_client.calls[1][1] == {
+        "sessionId": "ses_existing",
+        "cwd": "/tmp/acp-demo",
+        "mcpServers": [],
+    }
 
 
 def test_executor_explicit_load_session_does_not_fallback_to_new_session_on_failure():
@@ -260,7 +285,10 @@ def test_executor_explicit_load_session_does_not_fallback_to_new_session_on_fail
     session.backend_session_id = "ses_missing"
     fake_client = FakeClient(
         responses={
-            "initialize": {"protocolVersion": 1, "capabilities": {"loadSession": True}},
+            "initialize": {
+                "protocolVersion": 1,
+                "agentCapabilities": {"loadSession": True},
+            },
             "session/new": {"sessionId": "ses_fresh"},
         },
         load_error=executor_module.ACPError(message="session missing"),
@@ -299,7 +327,7 @@ def test_executor_compat_run_opencode_returns_plain_text_for_current_callers():
     executor_module, executor, session, input_module = make_executor_and_session()
     fake_client = FakeClient(
         responses={
-            "initialize": {"protocolVersion": 1, "capabilities": {}},
+            "initialize": {"protocolVersion": 1, "agentCapabilities": {}},
             "session/new": {"sessionId": "ses_compat"},
             "session/prompt": {
                 "sessionId": "ses_compat",
@@ -320,7 +348,7 @@ def test_executor_run_opencode_preserves_structured_prompt_payload_for_acp_calls
     executor_module, executor, session, input_module = make_executor_and_session()
     fake_client = FakeClient(
         responses={
-            "initialize": {"protocolVersion": 1, "capabilities": {}},
+            "initialize": {"protocolVersion": 1, "agentCapabilities": {}},
             "session/new": {"sessionId": "ses_structured"},
             "session/prompt": {
                 "sessionId": "ses_structured",
@@ -341,13 +369,13 @@ def test_executor_run_opencode_preserves_structured_prompt_payload_for_acp_calls
             return obj
 
         def to_payload(self):
-            return {"text": str(self), "contentBlocks": list(self.content_blocks)}
+            return {"text": str(self), "prompt": list(self.content_blocks)}
 
     result = asyncio.run(executor.run_opencode(RichPrompt(), session))
 
     assert isinstance(result, executor_module.ExecutionResult)
     assert result.final_text == "结构化完成"
-    assert fake_client.calls[2][1]["contentBlocks"] == [
+    assert fake_client.calls[2][1]["prompt"] == [
         {"type": "text", "text": "处理图片"},
         {"type": "image", "uri": "/tmp/demo.png", "mimeType": "image/png"},
     ]
@@ -365,7 +393,7 @@ def test_executor_list_sessions_returns_execution_result_items_for_acp_callers()
     executor_module, executor, session, input_module = make_executor_and_session()
     fake_client = FakeClient(
         responses={
-            "initialize": {"protocolVersion": 1, "capabilities": {}},
+            "initialize": {"protocolVersion": 1, "agentCapabilities": {}},
             "session/list": {
                 "sessions": [
                     {"sessionId": "ses_1", "title": "First"},
@@ -391,7 +419,10 @@ def test_executor_falls_back_to_new_session_when_recovery_is_unavailable_or_inva
     session.backend_session_id = "ses_stale"
     fake_client = FakeClient(
         responses={
-            "initialize": {"protocolVersion": 1, "capabilities": {"loadSession": True}},
+            "initialize": {
+                "protocolVersion": 1,
+                "agentCapabilities": {"loadSession": True},
+            },
             "session/new": {
                 "sessionId": "ses_fresh",
                 "agent": {"name": "build", "title": "Build"},
@@ -408,7 +439,7 @@ def test_executor_falls_back_to_new_session_when_recovery_is_unavailable_or_inva
 
     result = asyncio.run(
         executor.run_prompt(
-            {"contentBlocks": [{"type": "text", "text": "新会话"}]},
+            {"prompt": [{"type": "text", "text": "新会话"}]},
             session,
         )
     )
@@ -432,7 +463,10 @@ def test_executor_recovery_failure_clears_runtime_flags_before_recreate():
     session.prompt_running = True
     fake_client = FakeClient(
         responses={
-            "initialize": {"protocolVersion": 1, "capabilities": {"loadSession": True}},
+            "initialize": {
+                "protocolVersion": 1,
+                "agentCapabilities": {"loadSession": True},
+            },
             "session/new": {"sessionId": "ses_fresh"},
             "session/prompt": {
                 "sessionId": "ses_fresh",
@@ -446,7 +480,7 @@ def test_executor_recovery_failure_clears_runtime_flags_before_recreate():
 
     result = asyncio.run(
         executor.run_prompt(
-            {"contentBlocks": [{"type": "text", "text": "继续"}]},
+            {"prompt": [{"type": "text", "text": "继续"}]},
             session,
         )
     )
@@ -464,7 +498,7 @@ def test_executor_skips_recovery_when_backend_does_not_support_it():
         responses={
             "initialize": {
                 "protocolVersion": 1,
-                "capabilities": {"loadSession": False},
+                "agentCapabilities": {"loadSession": False},
             },
             "session/new": {"sessionId": "ses_fresh"},
             "session/prompt": {
@@ -478,7 +512,7 @@ def test_executor_skips_recovery_when_backend_does_not_support_it():
 
     result = asyncio.run(
         executor.run_prompt(
-            {"contentBlocks": [{"type": "text", "text": "fresh"}]},
+            {"prompt": [{"type": "text", "text": "fresh"}]},
             session,
         )
     )
@@ -508,7 +542,7 @@ def test_executor_returns_explicit_initialize_failure_result():
 
     result = asyncio.run(
         executor.run_prompt(
-            {"contentBlocks": [{"type": "text", "text": "hello"}]},
+            {"prompt": [{"type": "text", "text": "hello"}]},
             session,
         )
     )
@@ -524,7 +558,7 @@ def test_executor_marks_cancelled_run_explicitly():
     executor_module, executor, session, input_module = make_executor_and_session()
     fake_client = FakeClient(
         responses={
-            "initialize": {"protocolVersion": 1, "capabilities": {}},
+            "initialize": {"protocolVersion": 1, "agentCapabilities": {}},
             "session/new": {"sessionId": "ses_123"},
             "session/prompt": {
                 "sessionId": "ses_123",
@@ -537,7 +571,7 @@ def test_executor_marks_cancelled_run_explicitly():
 
     result = asyncio.run(
         executor.run_prompt(
-            {"contentBlocks": [{"type": "text", "text": "stop"}]},
+            {"prompt": [{"type": "text", "text": "stop"}]},
             session,
         )
     )
@@ -552,7 +586,7 @@ def test_executor_run_prompt_accepts_real_acp_prompt_payload_objects():
     executor_module, executor, session, input_module = make_executor_and_session()
     fake_client = FakeClient(
         responses={
-            "initialize": {"protocolVersion": 1, "capabilities": {}},
+            "initialize": {"protocolVersion": 1, "agentCapabilities": {}},
             "session/new": {"sessionId": "ses_payload"},
             "session/prompt": {
                 "sessionId": "ses_payload",
@@ -574,17 +608,38 @@ def test_executor_run_prompt_accepts_real_acp_prompt_payload_objects():
 
     assert result.ok is True
     assert result.final_text == "收到"
-    assert fake_client.calls[2][1]["contentBlocks"] == [
+    assert fake_client.calls[2][1]["prompt"] == [
         {"type": "text", "text": "处理图片"},
         {"type": "image", "uri": "/tmp/demo.png", "mimeType": "image/png"},
     ]
+
+
+def test_executor_coerces_string_dict_and_payload_objects_to_prompt_blocks():
+    executor_module, executor, session, input_module = make_executor_and_session()
+
+    plain_payload = executor._coerce_prompt_payload("你好")
+    dict_payload = executor._coerce_prompt_payload(
+        {"contentBlocks": [{"type": "text", "text": "旧字段"}]}
+    )
+    rich_payload = executor._coerce_prompt_payload(
+        input_module.ACPPromptPayload(
+            "处理图片", [{"type": "text", "text": "处理图片"}]
+        )
+    )
+
+    assert plain_payload == {"prompt": [{"type": "text", "text": "你好"}]}
+    assert dict_payload == {"prompt": [{"type": "text", "text": "旧字段"}]}
+    assert rich_payload == {
+        "text": "处理图片",
+        "prompt": [{"type": "text", "text": "处理图片"}],
+    }
 
 
 def test_executor_stream_prompt_emits_runtime_notifications_and_refreshes_session_state():
     executor_module, executor, session, input_module = make_executor_and_session()
     fake_client = FakeClient(
         responses={
-            "initialize": {"protocolVersion": 1, "capabilities": {}},
+            "initialize": {"protocolVersion": 1, "agentCapabilities": {}},
             "session/new": {
                 "sessionId": "ses_runtime",
                 "agent": {"name": "build", "title": "Build"},
@@ -680,7 +735,7 @@ def test_executor_stream_prompt_emits_permission_event_for_direct_protocol_metho
     executor_module, executor, session, input_module = make_executor_and_session()
     fake_client = FakeClient(
         responses={
-            "initialize": {"protocolVersion": 1, "capabilities": {}},
+            "initialize": {"protocolVersion": 1, "agentCapabilities": {}},
             "session/new": {
                 "sessionId": "ses_runtime",
                 "agent": {"name": "build", "title": "Build"},

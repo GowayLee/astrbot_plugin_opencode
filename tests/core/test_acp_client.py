@@ -94,6 +94,32 @@ class FailingSendTransport:
         self.closed = True
 
 
+class RecordingInitializeTransport:
+    def __init__(self, response=None):
+        self.started = False
+        self.closed = False
+        self.sent_messages = []
+        self._responses = asyncio.Queue()
+        self._response = response or {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "result": {"protocolVersion": 1, "agentCapabilities": {}},
+        }
+
+    async def start(self):
+        self.started = True
+
+    async def send(self, payload):
+        self.sent_messages.append(payload)
+        await self._responses.put(dict(self._response))
+
+    async def receive(self):
+        return await self._responses.get()
+
+    async def aclose(self):
+        self.closed = True
+
+
 def test_request_fails_pending_future_when_reader_transport_breaks():
     acp_client_module = load_acp_module("acp_client")
     acp_models_module = load_acp_module("acp_models")
@@ -129,5 +155,40 @@ def test_request_cleans_pending_future_when_send_fails_immediately():
             assert client._pending == {}
             return
         raise AssertionError("expected ACPTransportError to be raised")
+
+    asyncio.run(scenario())
+
+
+def test_initialize_sends_acp_v1_request_contract():
+    acp_client_module = load_acp_module("acp_client")
+
+    async def scenario():
+        transport = RecordingInitializeTransport()
+        client = acp_client_module.ACPClient(transport)
+
+        response = await client.initialize(
+            client_capabilities={"terminal": True},
+            client_info={
+                "name": "astrbot_plugin_acp",
+                "title": "ACP Client",
+                "version": "1.3.1",
+            },
+        )
+
+        assert response["protocolVersion"] == 1
+        request = transport.sent_messages[0]
+        assert request["method"] == "initialize"
+        assert request["params"] == {
+            "protocolVersion": 1,
+            "clientCapabilities": {"terminal": True},
+            "clientInfo": {
+                "name": "astrbot_plugin_acp",
+                "title": "ACP Client",
+                "version": "1.3.1",
+            },
+        }
+        assert "capabilities" not in request["params"]
+
+        await client.aclose()
 
     asyncio.run(scenario())

@@ -139,7 +139,11 @@ class CommandExecutor:
                 client_capabilities=self.get_acp_launch_config()[
                     "acp_client_capabilities"
                 ],
-                client_info={"name": "astrbot_plugin_opencode"},
+                client_info={
+                    "name": "astrbot_plugin_acp",
+                    "title": "ACP Client",
+                    "version": "1.3.1",
+                },
             )
         except (ACPStartupError, ACPTimeoutError, ACPTransportError, ACPError) as exc:
             await self.close()
@@ -462,6 +466,7 @@ class CommandExecutor:
                         {
                             "sessionId": session.backend_session_id,
                             "cwd": session.work_dir,
+                            "mcpServers": [],
                         }
                     )
                 except (ACPTransportError, ACPError) as exc:
@@ -501,7 +506,7 @@ class CommandExecutor:
         return SessionEnsureResult(ok=True)
 
     async def _create_session(self, session: OpenCodeSession) -> ExecutionResult:
-        payload: dict[str, Any] = {"cwd": session.work_dir}
+        payload: dict[str, Any] = {"cwd": session.work_dir, "mcpServers": []}
         if session.default_agent:
             payload["agent"] = session.default_agent
         if session.default_mode:
@@ -631,16 +636,31 @@ class CommandExecutor:
         return "\n".join(texts)
 
     def _coerce_prompt_payload(self, prompt_input: Any) -> dict[str, Any]:
+        def normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+            normalized = dict(payload)
+            prompt_blocks = normalized.get("prompt")
+            if not isinstance(prompt_blocks, list):
+                legacy_blocks = normalized.pop("contentBlocks", None)
+                if isinstance(legacy_blocks, list):
+                    prompt_blocks = legacy_blocks
+                elif isinstance(normalized.get("text"), str):
+                    prompt_blocks = [{"type": "text", "text": normalized["text"]}]
+                else:
+                    prompt_blocks = []
+            normalized["prompt"] = list(prompt_blocks)
+            normalized.pop("contentBlocks", None)
+            return normalized
+
         if hasattr(prompt_input, "to_payload") and callable(prompt_input.to_payload):
             payload = prompt_input.to_payload()
             if isinstance(payload, dict):
-                return dict(payload)
+                return normalize_payload(payload)
 
         if isinstance(prompt_input, dict):
-            return dict(prompt_input)
+            return normalize_payload(prompt_input)
 
         text = "" if prompt_input is None else str(prompt_input)
-        return {"contentBlocks": [{"type": "text", "text": text}]}
+        return {"prompt": [{"type": "text", "text": text}]}
 
     async def _stream_execution(self, session: OpenCodeSession, request_factory):
         session_key = id(session)

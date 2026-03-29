@@ -55,6 +55,25 @@ Plans:
 - [ ] 02-01-PLAN.md — 统一 slash-command 与 tool 的共享会话执行内核
 - [ ] 02-02-PLAN.md — 固化 /oc-new、/oc-end、/oc-session 的生命周期语义
 
+### Phase 02.3: 分析并修复 ACP 后端启动失败: opencode Invalid params (INSERTED)
+
+**Goal:** 让 AstrBot 插件发给 `opencode acp` 的 initialize / session / prompt 主链路重新符合 ACP v1 协议，并恢复真实 OpenCode runtime update 的正确消费。
+**Requirements**: PHASE-02.3-01, PHASE-02.3-02, PHASE-02.3-03, PHASE-02.3-04, PHASE-02.3-05
+**Depends on:** Phase 2
+**Success Criteria** (what must be TRUE):
+
+1. 插件发给 `opencode acp` 的 `initialize` 不再因缺少 `protocolVersion`、`clientCapabilities`、`clientInfo.version` 而报 `Invalid params`。
+2. 新建/恢复会话与首次 prompt 的 payload 符合 ACP v1，`session/new` / `session/load` 显式带 `mcpServers: []`，`session/prompt` 使用 `prompt` 字段。
+3. initialize 返回的 `agentCapabilities`、session payload 的 mode/config 结构、以及 `session/update` 通知都能被当前执行链正确消费，不再丢失恢复、mode、权限和过程消息。
+4. 在真实宿主中执行 `/oc hello` 与 `/oc-session` 时，不再出现 `ACP 后端启动失败: opencode` 包裹的 `Invalid params`。
+
+**Plans:** 1/2 plans executed
+
+Plans:
+
+- [x] 02.3-01-PLAN.md — 对齐 initialize / session / prompt 的 ACP v1 request shape
+- [ ] 02.3-02-PLAN.md — 修正 response/update 归一化并补上真实宿主冒烟标准
+
 ### Phase 02.1: AstrBot 实际加载环境中的配置面板同步与联调验证：先解决配置面板仍显示旧繁琐配置的问题，再回到 Phase 2 的真实运行环境验证 (INSERTED)
 
 **Goal**: 确认 AstrBot 宿主实际加载的是哪份插件元数据与配置 schema，修复导致旧配置面板持续显示的根因，并完成一轮真实环境联调闭环。
@@ -118,13 +137,14 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 2.1 → 2.2 → 3 → 4
+Phases execute in numeric order: 1 → 2 → 2.1 → 2.2 → 2.3 → 3 → 4
 
-| Phase                           | Plans Complete | Status      | Completed  |
-| ------------------------------- | -------------- | ----------- | ---------- |
-| 1. 配置收敛与兼容迁移           | 1/1            | Implemented | 2026-03-29 |
-| 2. 会话内核与生命周期统一       | 2/2            | Complete    | 2026-03-29 |
-| 2.1. 配置面板同步与联调验证     | 1/1            | Complete    | 2026-03-29 |
-| 2.2. 调研补全开发文档与协议规格 | 0/2            | Planned     | -          |
-| 3. 直接聊天交互体验             | 0/TBD          | Not started | -          |
-| 4. Tool 回传与统一安全策略      | 0/TBD          | Not started | -          |
+| Phase                             | Plans Complete | Status      | Completed  |
+| --------------------------------- | -------------- | ----------- | ---------- |
+| 1. 配置收敛与兼容迁移             | 1/1            | Implemented | 2026-03-29 |
+| 2. 会话内核与生命周期统一         | 2/2            | Complete    | 2026-03-29 |
+| 2.1. 配置面板同步与联调验证       | 1/1            | Complete    | 2026-03-29 |
+| 2.2. 调研补全开发文档与协议规格   | 0/2            | Planned     | -          |
+| 2.3. ACP 后端 Invalid params 修复 | 1/2            | In Progress | -          |
+| 3. 直接聊天交互体验               | 0/TBD          | Not started | -          |
+| 4. Tool 回传与统一安全策略        | 0/TBD          | Not started | -          |
