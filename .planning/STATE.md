@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 02.1-01-PLAN.md
-last_updated: "2026-03-29T11:52:40.839Z"
+stopped_at: Completed quick 260329-suy
+last_updated: "2026-03-29T12:56:04Z"
 last_activity: 2026-03-29
 progress:
   total_phases: 5
@@ -71,8 +71,9 @@ Recent decisions affecting current work:
 - [Phase 02]: 让 /oc 与 call_opencode_tool 共用执行准备与启动入口 — 统一 session ensure、permission 与后台启动语义，同时保持输出归属分离
 - [Phase 02]: 把 /oc-new、/oc-end 与 /oc-session 失败分支的状态说明收敛到同一套 lifecycle status renderer
 - [Phase 02]: 让 /oc-end 在没有 live backend session 时也返回当前 sender 状态，避免命令语义漂移
-- [Phase 02.1]: 把宿主加载问题首先归因到 metadata.yaml 与安装目录身份，而不是继续怀疑 _conf_schema.json 未更新。
+- [Phase 02.1]: 把宿主加载问题首先归因到 metadata.yaml 与安装目录身份，而不是继续怀疑 \_conf_schema.json 未更新。
 - [Phase 02.1]: 统一使用 astrbot_plugin_opencode / OpenCode Bridge / 1.3.1 作为插件对外身份，减少旧实例与旧配置快照复用风险。
+- [Quick 260329-suy]: metadata.yaml 重新成为插件身份唯一基线，运行时对外身份改为 astrbot_plugin_acp / ACP Client / Hauryn Lee。
 
 ### Roadmap Evolution
 
@@ -90,6 +91,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-29T11:52:40.817Z
-Stopped at: Completed 02.1-01-PLAN.md
+Last session: 2026-03-29T12:56:04Z
+Stopped at: Completed quick 260329-suy
 Resume file: None
