@@ -69,35 +69,35 @@
 
 Which phases cover which requirements. Updated during roadmap creation.
 
-| Requirement | Phase     | Status  |
-| ----------- | --------- | ------- |
-| CONF-01     | Phase TBD | Pending |
-| CONF-02     | Phase TBD | Pending |
-| CONF-03     | Phase TBD | Pending |
-| CONF-04     | Phase TBD | Pending |
-| CONF-05     | Phase TBD | Pending |
-| CHAT-01     | Phase TBD | Pending |
-| CHAT-02     | Phase TBD | Pending |
-| CHAT-03     | Phase TBD | Pending |
-| CHAT-04     | Phase TBD | Pending |
-| CHAT-05     | Phase TBD | Pending |
-| TOOL-01     | Phase TBD | Pending |
-| TOOL-02     | Phase TBD | Pending |
-| TOOL-03     | Phase TBD | Pending |
-| SESS-01     | Phase TBD | Pending |
-| SESS-02     | Phase TBD | Pending |
-| SESS-03     | Phase TBD | Pending |
-| SAFE-01     | Phase TBD | Pending |
-| SAFE-02     | Phase TBD | Pending |
-| SAFE-03     | Phase TBD | Pending |
+| Requirement | Phase   | Status  |
+| ----------- | ------- | ------- |
+| CONF-01     | Phase 1 | Pending |
+| CONF-02     | Phase 1 | Pending |
+| CONF-03     | Phase 1 | Pending |
+| CONF-04     | Phase 1 | Pending |
+| CONF-05     | Phase 1 | Pending |
+| CHAT-01     | Phase 3 | Pending |
+| CHAT-02     | Phase 3 | Pending |
+| CHAT-03     | Phase 3 | Pending |
+| CHAT-04     | Phase 3 | Pending |
+| CHAT-05     | Phase 3 | Pending |
+| TOOL-01     | Phase 4 | Pending |
+| TOOL-02     | Phase 4 | Pending |
+| TOOL-03     | Phase 4 | Pending |
+| SESS-01     | Phase 2 | Pending |
+| SESS-02     | Phase 2 | Pending |
+| SESS-03     | Phase 2 | Pending |
+| SAFE-01     | Phase 4 | Pending |
+| SAFE-02     | Phase 3 | Pending |
+| SAFE-03     | Phase 4 | Pending |
 
 **Coverage:**
 
 - v1 requirements: 19 total
-- Mapped to phases: 0
-- Unmapped: 19 ⚠️
+- Mapped to phases: 19
+- Unmapped: 0 ✓
 
 ---
 
 _Requirements defined: 2026-03-29_
-_Last updated: 2026-03-29 after initial definition draft_
+_Last updated: 2026-03-29 after roadmap creation_
