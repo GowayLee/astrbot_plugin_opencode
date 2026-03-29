@@ -3,6 +3,7 @@ AstrBot ACP Client 插件 - 让 AstrBot 通过 ACP 会话对接 OpenCode 等智�
 """
 
 import asyncio
+import copy
 import os
 import re
 import shlex
@@ -44,10 +45,17 @@ PLUGIN_REPO = "https://github.com/GowayLee/astrbot_plugin_opencode"
     PLUGIN_REPO,
 )
 class OpenCodePlugin(Star):
-    def __init__(self, context: Context, config: AstrBotConfig):
+    def __init__(self, context: Context, config: Optional[AstrBotConfig] = None):
         super().__init__(context)
-        self.config = config
-        self._migrate_config()
+        resolved_config = config
+        if resolved_config is None:
+            resolved_config = getattr(self, "config", None)
+        if resolved_config is None:
+            resolved_config = {}
+
+        self.config = resolved_config
+        self.runtime_config = copy.deepcopy(resolved_config)
+        self._migrate_config(self.runtime_config)
         self.logger = logger
 
         # 基础数据目录（使用框架 API 获取，兼容不同部署环境）
@@ -56,12 +64,13 @@ class OpenCodePlugin(Star):
         )
 
         # 初始化各个核心模块
-        self.session_mgr = SessionManager(config, self.base_data_dir)
-        self.storage_mgr = StorageManager(self.base_data_dir, config)
-        self.security = SecurityChecker(config, self.base_data_dir)
+        runtime_config = self._get_runtime_config()
+        self.session_mgr = SessionManager(runtime_config, self.base_data_dir)
+        self.storage_mgr = StorageManager(self.base_data_dir, runtime_config)
+        self.security = SecurityChecker(runtime_config, self.base_data_dir)
         self.input_proc = InputProcessor()
-        self.executor = CommandExecutor(config)
-        self.output_proc = OutputProcessor(config, self.base_data_dir)
+        self.executor = CommandExecutor(runtime_config)
+        self.output_proc = OutputProcessor(runtime_config, self.base_data_dir)
         self._send_file_list_cache: dict[str, dict] = {}
 
         # 设置模块间的回调函数，建立模块间的通信
@@ -69,9 +78,18 @@ class OpenCodePlugin(Star):
         self.storage_mgr.set_get_workdirs_callback(self.session_mgr.get_all_workdirs)
         self.security.set_load_history_callback(self.storage_mgr.load_workdir_history)
 
-    def _migrate_config(self):
-        """补齐新旧配置差异，确保运行时读取到完整默认值。"""
-        basic_cfg = self.config.setdefault("basic_config", {})
+    def _get_runtime_config(self) -> dict:
+        runtime_config = getattr(self, "runtime_config", None)
+        if isinstance(runtime_config, dict):
+            return runtime_config
+        return self.config
+
+    def _migrate_config(self, target_config: Optional[dict] = None):
+        """仅补齐运行时默认值，避免把隐藏字段写回 AstrBot 面板配置。"""
+        config = (
+            target_config if target_config is not None else self._get_runtime_config()
+        )
+        basic_cfg = config.setdefault("basic_config", {})
 
         if (
             "confirm_all_write_ops" in basic_cfg
@@ -86,7 +104,6 @@ class OpenCodePlugin(Star):
         basic_cfg.setdefault("work_dir", "")
         basic_cfg.setdefault("proxy_url", "")
         basic_cfg.setdefault("allow_file_writes", True)
-        basic_cfg.setdefault("auto_clean_interval", 60)
         basic_cfg.setdefault("confirm_timeout", 30)
 
         basic_cfg.setdefault("backend_type", "acp_opencode")
@@ -126,7 +143,7 @@ class OpenCodePlugin(Star):
         basic_cfg.setdefault("check_path_safety", False)
         basic_cfg.setdefault("confirm_all_write_ops", False)
 
-        tool_cfg = self.config.setdefault("tool_config", {})
+        tool_cfg = config.setdefault("tool_config", {})
         tool_cfg.setdefault(
             "tool_description",
             "在用户电脑上调用 OpenCode 等 AI 智能体 Agent 的工具。当用户有执行编程、处理文档等复杂任务的高级需求时，调用此工具。",
@@ -136,7 +153,7 @@ class OpenCodePlugin(Star):
             "详细的任务描述。保持原意，允许适当编辑以提升精准度，也可以不修改。此参数会被传送给 OpenCode 作为输入。",
         )
 
-        output_cfg = self.config.setdefault("output_config", {})
+        output_cfg = config.setdefault("output_config", {})
         output_cfg.setdefault(
             "output_modes", ["ai_summary", "txt_file", "long_image", "full_text"]
         )
@@ -280,7 +297,7 @@ class OpenCodePlugin(Star):
         for item in [
             session.agent_name,
             session.default_agent,
-            self.config.get("basic_config", {}).get("default_agent"),
+            self._get_runtime_config().get("basic_config", {}).get("default_agent"),
         ]:
             text = str(item or "").strip()
             if text and text not in values:
@@ -394,7 +411,11 @@ class OpenCodePlugin(Star):
 
     async def _wait_for_permission_choice(self, event, session) -> tuple[str, bool]:
         permission = dict(session.pending_permission or {})
-        timeout = self.config.get("basic_config", {}).get("confirm_timeout", 30)
+        timeout = (
+            self._get_runtime_config()
+            .get("basic_config", {})
+            .get("confirm_timeout", 30)
+        )
         completed = asyncio.Event()
         selected = {"option": ""}
 
@@ -800,7 +821,7 @@ class OpenCodePlugin(Star):
         tool_mgr = self.context.get_llm_tool_manager()
         tool = tool_mgr.get_func("call_opencode")
         if tool:
-            tool_cfg = self.config.get("tool_config", {})
+            tool_cfg = self._get_runtime_config().get("tool_config", {})
             desc = tool_cfg.get("tool_description")
             if desc:
                 tool.description = desc
@@ -821,9 +842,6 @@ class OpenCodePlugin(Star):
             self.context.llm_generate, self.context.get_current_chat_provider_id
         )
         self.output_proc.set_template_dir(os.path.dirname(__file__))
-
-        # 启动自动清理任务
-        self.storage_mgr.start_auto_clean_task()
 
         # 运行模式健康检查
         ok, detail = await self.executor.health_check()
@@ -867,7 +885,11 @@ class OpenCodePlugin(Star):
             return
 
         # 获取超时配置
-        timeout = self.config.get("basic_config", {}).get("confirm_timeout", 30)
+        timeout = (
+            self._get_runtime_config()
+            .get("basic_config", {})
+            .get("confirm_timeout", 30)
+        )
 
         approved, reason = await self._check_and_confirm_destructive(
             event,
@@ -1077,7 +1099,7 @@ class OpenCodePlugin(Star):
         target_path = path.strip() if path else None
 
         # 默认工作目录逻辑
-        basic_cfg = self.config.get("basic_config", {})
+        basic_cfg = self._get_runtime_config().get("basic_config", {})
         default_wd = basic_cfg.get("work_dir", "").strip()
         if not default_wd:
             default_wd = os.path.join(self.base_data_dir, "workspace")
@@ -1296,7 +1318,11 @@ class OpenCodePlugin(Star):
             await event.send(event.plain_result(empty_message))
             return
 
-        timeout = self.config.get("basic_config", {}).get("confirm_timeout", 30)
+        timeout = (
+            self._get_runtime_config()
+            .get("basic_config", {})
+            .get("confirm_timeout", 30)
+        )
         approved, reason = await self._check_and_confirm_destructive(
             event,
             final_task,

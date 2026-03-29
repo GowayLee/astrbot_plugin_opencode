@@ -113,6 +113,8 @@ def test_conf_schema_is_acp_only_contract():
     assert "acp_args" in items
     assert "acp_startup_timeout" in items
     assert "allow_file_writes" in items
+    assert "confirm_timeout" in items
+    assert "auto_clean_interval" not in items
     assert "backend_type" not in items
     assert "acp_client_capabilities" not in items
     assert "default_agent" not in items

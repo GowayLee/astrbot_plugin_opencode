@@ -96,18 +96,6 @@ class StorageManager:
 
     # ==================== 临时文件清理 ====================
 
-    def start_auto_clean_task(self):
-        """启动或重启自动清理任务"""
-        if self.auto_clean_task_handle:
-            self.auto_clean_task_handle.cancel()
-
-        interval = self.config.get("basic_config", {}).get("auto_clean_interval", 60)
-        if interval > 0:
-            self.auto_clean_task_handle = asyncio.create_task(
-                self._auto_clean_loop(interval)
-            )
-            self.logger.info(f"Auto-clean task started, interval: {interval} minutes")
-
     async def stop_auto_clean_task(self):
         """停止自动清理任务"""
         if self.auto_clean_task_handle:
@@ -116,28 +104,6 @@ class StorageManager:
                 await self.auto_clean_task_handle
             except asyncio.CancelledError:
                 pass
-
-    async def _auto_clean_loop(self, interval_minutes: int):
-        """定期清理临时文件循环"""
-        while True:
-            try:
-                # 每次循环重新获取配置间隔，支持热重载
-                current_interval = self.config.get("basic_config", {}).get(
-                    "auto_clean_interval", 60
-                )
-
-                # 如果配置变为0，则暂停清理（等待一段时间再检查）
-                if current_interval <= 0:
-                    await asyncio.sleep(60)
-                    continue
-
-                await asyncio.sleep(current_interval * 60)
-                await self.clean_temp_files()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self.logger.error(f"Auto-clean task error: {e}")
-                await asyncio.sleep(60)  # 出错后等待1分钟重试
 
     async def clean_temp_files(self) -> Tuple[int, float]:
         """执行清理操作，返回 (清理文件数, 清理大小MB)"""

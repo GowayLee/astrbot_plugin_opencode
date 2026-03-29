@@ -343,16 +343,20 @@ def test_migrate_config_fills_new_runtime_defaults(tmp_path):
     main_module, session_module = load_modules()
     plugin = main_module.OpenCodePlugin.__new__(main_module.OpenCodePlugin)
     plugin.config = {"basic_config": {"confirm_all_write_ops": False}}
+    plugin.runtime_config = {"basic_config": {"confirm_all_write_ops": False}}
     plugin._migrate_config()
 
-    basic_cfg = plugin.config["basic_config"]
+    basic_cfg = plugin.runtime_config["basic_config"]
     assert basic_cfg["allow_file_writes"] is True
     assert basic_cfg["backend_type"] == "acp_opencode"
     assert basic_cfg["default_agent"] == "build"
     assert basic_cfg["default_mode"] == "ask"
     assert basic_cfg["acp_client_capabilities"]["terminal"] is True
-    assert plugin.config["tool_config"]["tool_description"]
-    assert plugin.config["output_config"]["output_modes"]
+    assert plugin.runtime_config["tool_config"]["tool_description"]
+    assert plugin.runtime_config["output_config"]["output_modes"]
+    assert "backend_type" not in plugin.config["basic_config"]
+    assert "tool_config" not in plugin.config
+    assert "output_config" not in plugin.config
 
 
 def test_metadata_identity_matches():
