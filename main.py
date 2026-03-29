@@ -1,5 +1,5 @@
 """
-AstrBot OpenCode 插件 - 让 AstrBot 对接 OpenCode，通过自然语言远程指挥电脑干活。使用此插件，意味着你已知晓相关风险。
+AstrBot ACP Client 插件 - 让 AstrBot 通过 ACP 会话对接 OpenCode 等智能体，在聊天中完成编程与文件任务。使用此插件，意味着你已知晓相关风险。
 """
 
 import asyncio
@@ -28,10 +28,10 @@ from .core.executor import CommandExecutor
 from .core.output import OutputProcessor
 
 
-PLUGIN_ID = "astrbot_plugin_opencode"
-PLUGIN_DISPLAY_NAME = "OpenCode Bridge"
-PLUGIN_AUTHOR = "GowayLee"
-PLUGIN_DESCRIPTION = "让 AstrBot 通过 ACP 会话对接 OpenCode 智能体，在聊天中完成编程与文件任务。使用此插件，意味着你已知晓相关风险。"
+PLUGIN_ID = "astrbot_plugin_acp"
+PLUGIN_DISPLAY_NAME = "ACP Client"
+PLUGIN_AUTHOR = "Hauryn Lee"
+PLUGIN_DESCRIPTION = "让 AstrBot 通过 ACP 会话对接 OpenCode 等智能体，在聊天中完成编程与文件任务。使用此插件，意味着你已知晓相关风险。"
 PLUGIN_VERSION = "1.3.1"
 PLUGIN_REPO = "https://github.com/GowayLee/astrbot_plugin_opencode"
 
@@ -830,18 +830,18 @@ class OpenCodePlugin(Star):
         mode_text = "ACP 后端"
         if ok:
             self.logger.info(
-                f"OpenCode Plugin initialized. mode={mode_text}, detail={detail}"
+                f"{PLUGIN_DISPLAY_NAME} initialized. mode={mode_text}, detail={detail}"
             )
         else:
             self.logger.warning(
-                f"OpenCode Plugin initialized with warning. mode={mode_text}, detail={detail}"
+                f"{PLUGIN_DISPLAY_NAME} initialized with warning. mode={mode_text}, detail={detail}"
             )
 
     async def terminate(self):
         """插件卸载/停用时的清理"""
         await self.executor.close()
         await self.storage_mgr.stop_auto_clean_task()
-        self.logger.info("OpenCode Plugin terminated.")
+        self.logger.info(f"{PLUGIN_DISPLAY_NAME} terminated.")
 
     # ==================== 命令处理器 ====================
 
