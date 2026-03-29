@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed quick 260329-suy
-last_updated: "2026-03-29T12:56:04Z"
-last_activity: 2026-03-29
+stopped_at: Phase 02.2 context gathered
+last_updated: "2026-03-29T13:45:45.516Z"
+last_activity: "2026-03-29 - Completed quick task 260329-suy: @metadata.yaml 中的插件名与身份才是最新的, 你需要把代码中与opencode有关的名称重新对齐"
 progress:
-  total_phases: 5
-  completed_phases: 3
-  total_plans: 4
-  completed_plans: 4
+  total_phases: 6
+  completed_phases: 0
+  total_plans: 1
+  completed_plans: 3
   percent: 50
 ---
 
@@ -78,6 +78,7 @@ Recent decisions affecting current work:
 ### Roadmap Evolution
 
 - Phase 2.1 inserted after Phase 2: AstrBot 实际加载环境中的配置面板同步与联调验证：先解决配置面板仍显示旧繁琐配置的问题，再回到 Phase 2 的真实运行环境验证。 (URGENT)
+- Phase 2.2 inserted after Phase 2: 调研补全Astrbot插件开发文档、ACP协议、OpenCode ACP Server规格 (URGENT)
 
 ### Pending Todos
 
@@ -97,6 +98,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-29T12:56:04Z
-Stopped at: Completed quick 260329-suy
-Resume file: None
+Last session: 2026-03-29T13:45:45.511Z
+Stopped at: Phase 02.2 context gathered
+Resume file: .planning/phases/02.2-astrbot-acp-opencode-acp-server/02.2-CONTEXT.md
