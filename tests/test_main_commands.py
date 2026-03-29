@@ -343,7 +343,6 @@ def test_migrate_config_fills_new_runtime_defaults(tmp_path):
     main_module, session_module = load_modules()
     plugin = main_module.OpenCodePlugin.__new__(main_module.OpenCodePlugin)
     plugin.config = {"basic_config": {"confirm_all_write_ops": False}}
-
     plugin._migrate_config()
 
     basic_cfg = plugin.config["basic_config"]
@@ -356,15 +355,21 @@ def test_migrate_config_fills_new_runtime_defaults(tmp_path):
     assert plugin.config["output_config"]["output_modes"]
 
 
-def test_metadata_identity_matches_opencode_plugin_surface():
+def test_metadata_identity_matches():
     metadata = load_metadata_yaml()
-    main_text = (REPO_ROOT / "main.py").read_text(encoding="utf-8")
+    main_module, _ = load_modules()
 
-    assert metadata["plugin_id"] == "astrbot_plugin_opencode"
-    assert metadata["name"] == "astrbot_plugin_opencode"
-    assert metadata["display_name"] == "OpenCode Bridge"
-    assert '"astrbot_plugin_opencode"' in main_text
-    assert '"OpenCode Bridge"' in main_text
+    assert metadata["plugin_id"] == metadata["name"]
+    assert main_module.PLUGIN_ID == metadata["plugin_id"]
+    assert main_module.PLUGIN_DISPLAY_NAME == metadata["display_name"]
+    assert main_module.PLUGIN_AUTHOR == metadata["author"]
+    assert main_module.PLUGIN_DESCRIPTION == metadata["description"]
+    assert main_module.PLUGIN_REPO == metadata["repo"]
+
+    assert "OpenCode" in main_module.PLUGIN_DESCRIPTION
+    assert main_module.PLUGIN_ID != "astrbot_plugin_opencode"
+    assert main_module.PLUGIN_DISPLAY_NAME != "OpenCode Bridge"
+    assert main_module.PLUGIN_AUTHOR != "GowayLee"
 
 
 def test_oc_handler_blocks_write_when_file_writes_disabled(tmp_path):
