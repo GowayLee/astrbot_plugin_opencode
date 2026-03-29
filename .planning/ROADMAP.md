@@ -93,6 +93,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase                      | Plans Complete | Status      | Completed  |
 | -------------------------- | -------------- | ----------- | ---------- |
 | 1. 配置收敛与兼容迁移      | 1/1            | Implemented | 2026-03-29 |
-| 2. 会话内核与生命周期统一  | 1/2 | In Progress|  |
+| 2. 会话内核与生命周期统一  | 2/2            | Complete    | 2026-03-29 |
 | 3. 直接聊天交互体验        | 0/TBD          | Not started | -          |
 | 4. Tool 回传与统一安全策略 | 0/TBD          | Not started | -          |

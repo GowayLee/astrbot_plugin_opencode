@@ -31,6 +31,21 @@
 2. 或手动将插件文件夹放入 `data/plugins/` 目录
 3. 重启 AstrBot 并在管理面板启用插件
 
+### 面板同步排查基线
+
+若 WebUI 里仍看到旧的 ACP 协议级配置项，请先按下面的链路核对，不要直接假设 `_conf_schema.json` 没更新：
+
+1. **宿主实际插件目录**：确认 AstrBot 实际加载的是 `data/plugins/astrbot_plugin_opencode/`，不是历史副本目录。
+2. **插件元数据来源**：AstrBot 会读取插件目录里的 `metadata.yaml`，其中的 `plugin_id`、`name`、`display_name` 会影响插件识别与展示。
+3. **配置面板 schema 来源**：AstrBot 会读取同一目录下的 `_conf_schema.json` 生成配置面板，并把配置实体写到 `data/config/<plugin_name>_config.json`。
+4. **旧面板常见根因（按证据强弱排序）**：
+   - 仍加载旧插件目录或旧副本，导致读到历史 `metadata.yaml` / `_conf_schema.json`
+   - 插件元数据仍保留旧身份（如 `astrbot_plugin_acp_client` / `ACP Client`），让宿主继续沿用旧实例或旧配置快照
+   - 升级后 AstrBot 未刷新插件缓存、未重启宿主，面板仍显示旧实例快照
+   - 管理员打开的是旧插件实例，而不是当前仓库对应的新插件目录
+
+排查时建议同时记录：插件目录名、`metadata.yaml` 中的 `plugin_id` / `display_name`、WebUI 中展示的插件名，以及宿主生成的 `data/config/*.json` 文件名。这样可以快速判断问题出在源码、安装路径还是宿主缓存。
+
 ## 快速开始
 
 1. 在插件配置中确认后端保持为 `acp_opencode`
@@ -43,17 +58,17 @@
 
 ## 指令
 
-| 指令 | 说明 | 示例 |
-|------|------|------|
-| `/oc <任务>` | 执行自然语言任务，默认延续当前 ACP 会话上下文 | `/oc 查看当前目录下的文件` |
-| `/oc-agent [名称]` | 查看或设置默认 agent；已有 live session 时本轮不强切 | `/oc-agent`、`/oc-agent plan` |
-| `/oc-mode [值]` | 查看或设置 mode / config option；后端支持时会同步作用到当前 live session | `/oc-mode`、`/oc-mode ask` |
-| `/oc-new [路径]` | 解绑当前 ACP 会话，并为下一次新会话更新工作目录 | `/oc-new D:\Projects` |
-| `/oc-end` | 仅结束当前 ACP 会话绑定，保留工作目录与默认偏好 | `/oc-end` |
-| `/oc-session [序号/ID/标题]` | 查看、绑定历史 ACP 会话 | `/oc-session`、`/oc-session 1` |
-| `/oc-send [参数]` | 列出并发送 AstrBot 宿主机文件 | `/oc-send`、`/oc-send 1,3`、`/oc-send src/a.py` |
-| `/oc-clean` | 手动清理临时文件 | `/oc-clean` |
-| `/oc-history` | 查看工作目录使用历史 | `/oc-history` |
+| 指令                         | 说明                                                                     | 示例                                            |
+| ---------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------- |
+| `/oc <任务>`                 | 执行自然语言任务，默认延续当前 ACP 会话上下文                            | `/oc 查看当前目录下的文件`                      |
+| `/oc-agent [名称]`           | 查看或设置默认 agent；已有 live session 时本轮不强切                     | `/oc-agent`、`/oc-agent plan`                   |
+| `/oc-mode [值]`              | 查看或设置 mode / config option；后端支持时会同步作用到当前 live session | `/oc-mode`、`/oc-mode ask`                      |
+| `/oc-new [路径]`             | 解绑当前 ACP 会话，并为下一次新会话更新工作目录                          | `/oc-new D:\Projects`                           |
+| `/oc-end`                    | 仅结束当前 ACP 会话绑定，保留工作目录与默认偏好                          | `/oc-end`                                       |
+| `/oc-session [序号/ID/标题]` | 查看、绑定历史 ACP 会话                                                  | `/oc-session`、`/oc-session 1`                  |
+| `/oc-send [参数]`            | 列出并发送 AstrBot 宿主机文件                                            | `/oc-send`、`/oc-send 1,3`、`/oc-send src/a.py` |
+| `/oc-clean`                  | 手动清理临时文件                                                         | `/oc-clean`                                     |
+| `/oc-history`                | 查看工作目录使用历史                                                     | `/oc-history`                                   |
 
 ## 会话语义
 
@@ -86,50 +101,19 @@
 
 ### 基础配置
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `only_admin` | 仅管理员可用 | `true` |
-| `backend_type` | 后端类型，当前固定为 `acp_opencode` | `acp_opencode` |
-| `acp_command` | ACP 启动命令 | `opencode` |
-| `acp_args` | ACP 启动参数 | `["acp"]` |
-| `acp_startup_timeout` | ACP 启动与握手超时（秒） | `30` |
-| `acp_client_capabilities` | 初始化时上报的 ACP 客户端能力 | `{"fs_read_text": true, "fs_write_text": true, "terminal": true}` |
-| `default_agent` | 新会话默认 agent | `build` |
-| `default_mode` | 新会话默认 mode | `ask` |
-| `default_config_options` | 新会话默认 config option 键值对 | `{}` |
-| `work_dir` | 默认工作目录 | (插件数据目录下的 workspace) |
-| `proxy_url` | 代理地址 | (空) |
-| `destructive_keywords` | 敏感操作关键词（正则） | `删除`, `rm`, `delete` 等 |
-| `confirm_all_write_ops` | 写操作需确认 | `true` |
-| `check_path_safety` | 文件路径安全检查 | `false` |
-| `auto_clean_interval` | 自动清理间隔（分钟） | `60` |
-| `confirm_timeout` | 敏感操作确认超时（秒） | `30` |
+| 配置项                | 说明                     | 默认值                       |
+| --------------------- | ------------------------ | ---------------------------- |
+| `only_admin`          | 仅管理员可用             | `true`                       |
+| `acp_command`         | ACP 启动命令             | `opencode`                   |
+| `acp_args`            | ACP 启动参数             | `["acp"]`                    |
+| `acp_startup_timeout` | ACP 启动与握手超时（秒） | `30`                         |
+| `work_dir`            | 默认工作目录             | (插件数据目录下的 workspace) |
+| `proxy_url`           | 代理地址                 | (空)                         |
+| `allow_file_writes`   | 是否允许文件写入类操作   | `true`                       |
+| `auto_clean_interval` | 自动清理间隔（分钟）     | `60`                         |
+| `confirm_timeout`     | 敏感操作确认超时（秒）   | `30`                         |
 
-### 输出配置
-
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `output_modes` | 输出方式（多选） | `ai_summary`, `txt_file`, `long_image`, `full_text` |
-| `merge_forward_enabled` | 是否启用合并转发发送 | `false` |
-| `summary_provider` | AI 摘要服务提供商 | (空) |
-| `max_text_length` | 长文本阈值 | `1000` |
-| `smart_trigger_ai_summary` | `ai_summary` 是否按阈值智能触发 | `true` |
-| `smart_trigger_txt_file` | `txt_file` 是否按阈值智能触发 | `true` |
-| `smart_trigger_long_image` | `long_image` 是否按阈值智能触发 | `true` |
-
-**可选输出模式**：
-- `last_line`：显示文本末段（长文本自动截断）
-- `ai_summary`：AI 智能摘要
-- `txt_file`：生成 TXT 文件
-- `long_image`：渲染为代码风格长图
-- `full_text`：全量文本（超阈值按 `max_text_length` 自动切分）
-
-### LLM 工具配置
-
-| 配置项 | 说明 |
-|--------|------|
-| `tool_description` | Function Tool 描述（影响 AI 何时调用） |
-| `arg_description` | 参数描述 |
+> 注意：`backend_type`、`acp_client_capabilities`、`default_agent`、`default_mode`、`default_config_options`、输出配置、LLM 工具描述等运行时字段已经从 WebUI 面板移除，交由插件内部迁移逻辑补齐。若你仍在面板中看到这些字段，通常说明宿主加载的不是当前仓库对应的插件副本，或旧实例缓存尚未刷新。
 
 ## `/oc-send` 说明
 
@@ -148,6 +132,13 @@
 
 如果你之前依赖旧配置，请在升级后重新检查 WebUI 中的插件配置，确认只保留 ACP 相关字段。
 
+如果 WebUI 仍显示 `ACP Client`、`astrbot_plugin_acp_client` 或协议级旧字段，建议按以下顺序处理：
+
+1. 删除或移走旧插件副本，只保留 `astrbot_plugin_opencode`
+2. 重启 AstrBot，让宿主重新读取当前插件目录中的 `metadata.yaml` 与 `_conf_schema.json`
+3. 核对 `data/config/` 下是否仍残留旧插件 ID 对应的配置文件，必要时清理旧实例后重新安装
+4. 回到 WebUI 检查插件名称、版本和配置字段是否已与本仓库一致
+
 ## 安全说明
 
 本插件赋予机器人对宿主电脑的操作权限，请注意：
@@ -163,6 +154,7 @@
 插件会自动记录所有使用过的工作目录到 `data/plugin_data/astrbot_plugin_opencode/workdir_history.json`。
 
 历史记录包含：
+
 - 路径
 - 首次使用时间
 - 最后使用时间
@@ -197,6 +189,7 @@
 <summary>点击此处展开</summary>
 
 ### 1) 主入口：持续对话执行（`/oc`）
+
 ```text
 用户: /oc 帮我创建一个 Python 项目骨架，并生成 README
 机器人: 🚀 开始执行任务
@@ -204,6 +197,7 @@
 ```
 
 ### 2) 多模态输入：图片/引用消息参与任务
+
 ```text
 用户: [发送截图] /oc 按这张图复刻页面并保存为 index.html
 机器人: 🚀 开始执行任务
@@ -211,6 +205,7 @@
 ```
 
 ### 3) Agent 与 Mode 偏好
+
 ```text
 用户: /oc-agent plan
 机器人: ✅ 已更新默认 agent
@@ -220,6 +215,7 @@
 ```
 
 ### 4) 会话重置与目录切换（`/oc-new` / `/oc-end`）
+
 ```text
 用户: /oc-new D:\Projects\demo
 机器人: ✅ 已重置当前 ACP 会话绑定
@@ -229,6 +225,7 @@
 ```
 
 ### 5) 历史会话绑定（`/oc-session`）
+
 ```text
 用户: /oc-session
 机器人: 📋 ACP 会话列表
@@ -238,6 +235,7 @@
 ```
 
 ### 6) 权限确认流
+
 ```text
 用户: /oc 再创建一个 hello.txt 文件
 机器人: ⚠️ 权限确认：展示工具、路径摘要和可选项
@@ -246,6 +244,7 @@
 ```
 
 ### 7) 文件发送与路径安全（`/oc-send`）
+
 ```text
 用户: /oc-send
 机器人: 📄 列出当前工作区文件（分页，带阿拉伯数字序号）
@@ -255,6 +254,7 @@
 ```
 
 ### 8) 输出与运维（`/oc-clean` / `/oc-history`）
+
 ```text
 用户: /oc-clean
 机器人: 🧹 清理完成，返回释放空间

@@ -217,6 +217,22 @@ class OpenCodePlugin(Star):
             lines.append("🔗 当前会话: 未绑定（下次 /oc 会创建新会话）")
         return lines
 
+    def _render_lifecycle_status(
+        self,
+        session,
+        headline: str,
+        *,
+        include_proxy: bool = False,
+        extra_lines: Optional[list[str]] = None,
+    ) -> str:
+        lines = [headline, f"📂 工作目录: {session.work_dir}"]
+        if include_proxy:
+            lines.append(f"🌐 代理环境: {session.env.get('http_proxy', '无')}")
+        if extra_lines:
+            lines.extend(extra_lines)
+        lines.extend(self._render_live_state_lines(session, include_defaults=True))
+        return "\n".join(lines)
+
     def _get_mode_options(self, session) -> tuple[str, list[dict[str, Any]]]:
         config_mode_options = [
             item
@@ -1114,13 +1130,10 @@ class OpenCodePlugin(Star):
     async def _init_session(self, sender_id, work_dir):
         """初始化会话的辅助函数"""
         session = self.session_mgr.reset_session(sender_id, work_dir=work_dir)
-        proxy_info = session.env.get("http_proxy", "无")
-        return (
-            f"✅ 已重置当前 ACP 会话绑定\n"
-            f"📂 工作目录: {session.work_dir}\n"
-            f"🌐 代理环境: {proxy_info}\n"
-            f"🧭 默认 agent: {session.default_agent or '未设置'}\n"
-            f"🪄 默认 mode: {session.default_mode or '未设置'}"
+        return self._render_lifecycle_status(
+            session,
+            "✅ 已重置当前 ACP 会话绑定",
+            include_proxy=True,
         )
 
     @filter.command("oc-end")
@@ -1131,14 +1144,15 @@ class OpenCodePlugin(Star):
             return
 
         sender_id = event.get_sender_id()
-        session = self.session_mgr.get_session(sender_id)
-        if session:
-            session.reset_live_session()
-            lines = ["🚫 已结束当前 ACP 会话绑定。"]
-            lines.extend(self._render_live_state_lines(session, include_defaults=True))
-            yield event.plain_result("\n".join(lines))
-        else:
-            yield event.plain_result("当前没有活跃的会话。")
+        session = self.session_mgr.get_or_create_session(sender_id)
+        had_live_session = bool(session.backend_session_id)
+        session.reset_live_session()
+        headline = (
+            "🚫 已结束当前 ACP 会话绑定。"
+            if had_live_session
+            else "🚫 当前没有正在绑定的 ACP 会话，已结束空会话并保持未绑定状态。"
+        )
+        yield event.plain_result(self._render_lifecycle_status(session, headline))
 
     @filter.command("oc-clean")
     async def oc_clean(self, event: AstrMessageEvent):
@@ -1232,7 +1246,13 @@ class OpenCodePlugin(Star):
         loaded = await self.executor.load_session(session)
         if not loaded.ok:
             session.reset_live_session()
-            yield event.plain_result(f"❌ 绑定历史会话失败：{loaded.message}")
+            yield event.plain_result(
+                self._render_lifecycle_status(
+                    session,
+                    f"❌ 绑定历史会话失败：{loaded.message}",
+                    extra_lines=[f"📝 目标标题: {target_session['title']}"],
+                )
+            )
             return
 
         lines = [

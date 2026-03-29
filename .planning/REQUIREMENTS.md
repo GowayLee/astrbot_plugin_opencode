@@ -30,7 +30,7 @@
 ### Session And State
 
 - [x] **SESS-01**: 用户在同一聊天身份下连续发起任务时，可以延续同一底层 ACP 会话，而不会意外丢失上下文
-- [ ] **SESS-02**: 用户在执行 `/oc-new`、`/oc-end`、`/oc-session` 等生命周期命令后，可以得到一致且可预期的会话行为
+- [x] **SESS-02**: 用户在执行 `/oc-new`、`/oc-end`、`/oc-session` 等生命周期命令后，可以得到一致且可预期的会话行为
 - [x] **SESS-03**: slash-command 与 tool 调用可以复用同一套执行内核，但不会混淆彼此的输出语义或状态流
 
 ### Safety And Permissions
@@ -85,7 +85,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TOOL-02     | Phase 4 | Pending |
 | TOOL-03     | Phase 4 | Pending |
 | SESS-01     | Phase 2 | Complete |
-| SESS-02     | Phase 2 | Pending |
+| SESS-02     | Phase 2 | Complete |
 | SESS-03     | Phase 2 | Complete |
 | SAFE-01     | Phase 4 | Pending |
 | SAFE-02     | Phase 3 | Pending |

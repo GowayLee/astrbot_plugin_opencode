@@ -8,6 +8,19 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def load_metadata_yaml():
+    items = {}
+    for raw_line in (
+        (REPO_ROOT / "metadata.yaml").read_text(encoding="utf-8").splitlines()
+    ):
+        line = raw_line.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        items[key.strip()] = value.strip()
+    return items
+
+
 def load_modules():
     astrbot_module = types.ModuleType("astrbot")
     api_module = types.ModuleType("astrbot.api")
@@ -343,6 +356,17 @@ def test_migrate_config_fills_new_runtime_defaults(tmp_path):
     assert plugin.config["output_config"]["output_modes"]
 
 
+def test_metadata_identity_matches_opencode_plugin_surface():
+    metadata = load_metadata_yaml()
+    main_text = (REPO_ROOT / "main.py").read_text(encoding="utf-8")
+
+    assert metadata["plugin_id"] == "astrbot_plugin_opencode"
+    assert metadata["name"] == "astrbot_plugin_opencode"
+    assert metadata["display_name"] == "OpenCode Bridge"
+    assert '"astrbot_plugin_opencode"' in main_text
+    assert '"OpenCode Bridge"' in main_text
+
+
 def test_oc_handler_blocks_write_when_file_writes_disabled(tmp_path):
     main_module, session_module, plugin = make_plugin(tmp_path)
 
@@ -491,6 +515,8 @@ def test_oc_session_reports_load_failure_without_leaving_fake_bound_session(tmp_
     assert ("load_session", "ses_1") in plugin.executor.calls
     assert session.backend_session_id is None
     assert any("绑定历史会话失败" in output for output in outputs)
+    assert any("当前会话: 未绑定" in output for output in outputs)
+    assert any(str(tmp_path) in output for output in outputs)
 
 
 def test_call_opencode_tool_uses_permission_flow_in_background(tmp_path):
@@ -727,6 +753,22 @@ def test_oc_end_clears_live_session_but_keeps_preferences(tmp_path):
     assert session.default_agent == "plan"
     assert session.default_mode == "code"
     assert any("已结束" in output for output in outputs)
+    assert any(str(tmp_path) in output for output in outputs)
+    assert any("当前会话: 未绑定" in output for output in outputs)
+
+
+def test_oc_end_without_existing_session_still_reports_stable_sender_state(tmp_path):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+    plugin.config["basic_config"]["work_dir"] = str(tmp_path / "default")
+
+    outputs = asyncio.run(collect(plugin.oc_end(FakeEvent(message_str="/oc-end"))))
+
+    session = plugin.session_mgr.get_session("alice")
+    assert session is not None
+    assert session.backend_session_id is None
+    assert any("已结束" in output for output in outputs)
+    assert any("当前会话: 未绑定" in output for output in outputs)
+    assert any(str(tmp_path / "default") in output for output in outputs)
 
 
 def test_oc_new_resets_live_session_and_switches_workdir(tmp_path):
@@ -749,3 +791,45 @@ def test_oc_new_resets_live_session_and_switches_workdir(tmp_path):
     assert session.backend_session_id is None
     assert session.default_agent == "plan"
     assert any(str(target_dir) in output for output in outputs)
+    assert any("当前会话: 未绑定" in output for output in outputs)
+
+
+def test_oc_new_without_path_resets_to_default_workdir_and_keeps_preferences(tmp_path):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+    plugin.config["basic_config"]["work_dir"] = str(tmp_path / "default")
+    session = plugin.session_mgr.get_or_create_session(
+        "alice", custom_work_dir=str(tmp_path)
+    )
+    session.backend_session_id = "ses_live"
+    session.default_agent = "plan"
+    session.default_mode = "code"
+
+    outputs = asyncio.run(collect(plugin.oc_new(FakeEvent(message_str="/oc-new"), "")))
+
+    assert session.work_dir == str(tmp_path / "default")
+    assert session.backend_session_id is None
+    assert session.default_agent == "plan"
+    assert session.default_mode == "code"
+    assert any(str(tmp_path / "default") in output for output in outputs)
+    assert any("当前会话: 未绑定" in output for output in outputs)
+
+
+def test_oc_new_rejects_missing_directory_and_falls_back_to_default_workdir(tmp_path):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+    plugin.config["basic_config"]["work_dir"] = str(tmp_path / "default")
+    session = plugin.session_mgr.get_or_create_session(
+        "alice", custom_work_dir=str(tmp_path)
+    )
+    session.backend_session_id = "ses_live"
+    session.default_agent = "plan"
+    missing_dir = tmp_path / "missing"
+    event = FakeEvent(message_str="n")
+
+    outputs = asyncio.run(collect(plugin.oc_new(event, str(missing_dir))))
+
+    assert any("目录不存在" in output for output in outputs)
+    assert any("已取消自定义路径" in output for output in event.sent)
+    assert any(str(tmp_path / "default") in output for output in event.sent)
+    assert session.work_dir == str(tmp_path / "default")
+    assert session.backend_session_id is None
+    assert session.default_agent == "plan"

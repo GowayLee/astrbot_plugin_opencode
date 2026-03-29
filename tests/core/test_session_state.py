@@ -260,6 +260,56 @@ def test_session_manager_reset_preserves_preferences_and_updates_work_dir(tmp_pa
     assert reset_session.default_config_options == {"model": "claude"}
 
 
+def test_session_manager_reset_falls_back_when_target_workdir_cannot_be_created(
+    tmp_path, monkeypatch
+):
+    session_module = load_session_module()
+    config = {
+        "basic_config": {
+            "backend_type": "acp_opencode",
+            "work_dir": str(tmp_path / "default"),
+            "default_agent": "build",
+            "default_mode": "ask",
+            "default_config_options": {"model": "gpt-5"},
+            "proxy_url": "",
+        }
+    }
+    manager = session_module.SessionManager(config, str(tmp_path / "data"))
+    session = manager.get_or_create_session("alice")
+    session.default_agent = "plan"
+    session.default_mode = "code"
+    session.backend_session_id = "ses_123"
+
+    blocked_path = str(tmp_path / "blocked")
+    original_exists = session_module.os.path.exists
+    original_makedirs = session_module.os.makedirs
+    original_getcwd = session_module.os.getcwd
+
+    monkeypatch.setattr(
+        session_module.os.path,
+        "exists",
+        lambda path: False if path == blocked_path else original_exists(path),
+    )
+
+    def fail_makedirs(path, exist_ok=False):
+        if path == blocked_path:
+            raise OSError("permission denied")
+        return original_makedirs(path, exist_ok=exist_ok)
+
+    monkeypatch.setattr(session_module.os, "makedirs", fail_makedirs)
+    monkeypatch.setattr(
+        session_module.os, "getcwd", lambda: str(tmp_path / "cwd-fallback")
+    )
+
+    reset_session = manager.reset_session("alice", work_dir=blocked_path)
+
+    assert reset_session.work_dir == str(tmp_path / "cwd-fallback")
+    assert reset_session.backend_session_id is None
+    assert reset_session.default_agent == "plan"
+    assert reset_session.default_mode == "code"
+    assert reset_session.default_config_options == {"model": "gpt-5"}
+
+
 def test_binding_existing_backend_session_does_not_overwrite_defaults_or_work_dir(
     tmp_path,
 ):
