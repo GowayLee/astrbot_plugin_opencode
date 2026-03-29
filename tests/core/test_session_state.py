@@ -226,6 +226,50 @@ def test_drop_backend_session_clears_live_state_but_keeps_defaults_and_work_dir(
     assert session.prompt_running is False
 
 
+def test_bind_backend_session_marks_history_binding_without_live_runtime():
+    session_module = load_session_module()
+    session = session_module.OpenCodeSession(
+        work_dir="/tmp/demo",
+        env={},
+        backend_kind="acp_opencode",
+        default_agent="build",
+        default_mode="ask",
+        default_config_options={"model": "gpt-5"},
+    )
+    session.agent_name = "plan"
+    session.pending_permission = {"id": "perm_1"}
+    session.prompt_running = True
+
+    session.bind_backend_session("ses_history")
+
+    assert session.backend_session_id == "ses_history"
+    assert session.backend_session_live is False
+    assert session.has_bound_backend_session is True
+    assert session.has_live_backend_session is False
+    assert session.agent_name is None
+    assert session.pending_permission is None
+    assert session.prompt_running is False
+
+
+def test_mark_backend_session_live_promotes_existing_binding_to_live_session():
+    session_module = load_session_module()
+    session = session_module.OpenCodeSession(
+        work_dir="/tmp/demo",
+        env={},
+        backend_kind="acp_opencode",
+        default_agent="build",
+        default_mode="ask",
+    )
+
+    session.bind_backend_session("ses_live")
+    session.mark_backend_session_live()
+
+    assert session.backend_session_id == "ses_live"
+    assert session.backend_session_live is True
+    assert session.has_bound_backend_session is True
+    assert session.has_live_backend_session is True
+
+
 def test_session_manager_reset_preserves_preferences_and_updates_work_dir(tmp_path):
     session_module = load_session_module()
     config = {

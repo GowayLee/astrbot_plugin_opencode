@@ -207,7 +207,7 @@ def test_executor_creates_session_then_prompts():
 
 def test_executor_loads_existing_session_when_backend_supports_recovery():
     executor_module, executor, session, input_module = make_executor_and_session()
-    session.backend_session_id = "ses_existing"
+    session.bind_backend_session("ses_existing")
     fake_client = FakeClient(
         responses={
             "initialize": {
@@ -251,7 +251,7 @@ def test_executor_loads_existing_session_when_backend_supports_recovery():
 
 def test_executor_prefers_agent_capabilities_for_session_recovery_support():
     executor_module, executor, session, input_module = make_executor_and_session()
-    session.backend_session_id = "ses_existing"
+    session.bind_backend_session("ses_existing")
     fake_client = FakeClient(
         responses={
             "initialize": {
@@ -290,7 +290,7 @@ def test_executor_prefers_agent_capabilities_for_session_recovery_support():
 
 def test_executor_exposes_public_load_session_entry():
     executor_module, executor, session, input_module = make_executor_and_session()
-    session.backend_session_id = "ses_existing"
+    session.bind_backend_session("ses_existing")
     fake_client = FakeClient(
         responses={
             "initialize": {
@@ -321,7 +321,7 @@ def test_executor_exposes_public_load_session_entry():
 
 def test_executor_explicit_load_session_does_not_fallback_to_new_session_on_failure():
     executor_module, executor, session, input_module = make_executor_and_session()
-    session.backend_session_id = "ses_missing"
+    session.bind_backend_session("ses_missing")
     fake_client = FakeClient(
         responses={
             "initialize": {
@@ -455,7 +455,7 @@ def test_executor_list_sessions_returns_execution_result_items_for_acp_callers()
 
 def test_executor_falls_back_to_new_session_when_recovery_is_unavailable_or_invalid():
     executor_module, executor, session, input_module = make_executor_and_session()
-    session.backend_session_id = "ses_stale"
+    session.bind_backend_session("ses_stale")
     fake_client = FakeClient(
         responses={
             "initialize": {
@@ -497,7 +497,7 @@ def test_executor_falls_back_to_new_session_when_recovery_is_unavailable_or_inva
 
 def test_executor_recovery_failure_clears_runtime_flags_before_recreate():
     executor_module, executor, session, input_module = make_executor_and_session()
-    session.backend_session_id = "ses_stale"
+    session.bind_backend_session("ses_stale")
     session.pending_permission = {"id": "perm_1"}
     session.prompt_running = True
     fake_client = FakeClient(
@@ -530,20 +530,20 @@ def test_executor_recovery_failure_clears_runtime_flags_before_recreate():
     assert session.prompt_running is False
 
 
-def test_executor_skips_recovery_when_backend_does_not_support_it():
+def test_executor_reuses_live_session_without_load_when_backend_does_not_support_recovery():
     executor_module, executor, session, input_module = make_executor_and_session()
-    session.backend_session_id = "ses_old"
+    session.bind_backend_session("ses_live")
+    session.mark_backend_session_live()
     fake_client = FakeClient(
         responses={
             "initialize": {
                 "protocolVersion": 1,
                 "agentCapabilities": {"loadSession": False},
             },
-            "session/new": {"sessionId": "ses_fresh"},
             "session/prompt": {
-                "sessionId": "ses_fresh",
+                "sessionId": "ses_live",
                 "stopReason": "end_turn",
-                "outputText": "fresh",
+                "outputText": "continued",
             },
         }
     )
@@ -559,9 +559,48 @@ def test_executor_skips_recovery_when_backend_does_not_support_it():
     assert result.ok is True
     assert result.recovered_session is False
     assert result.session_recovery_failed is False
-    assert session.backend_session_id == "ses_fresh"
+    assert session.backend_session_id == "ses_live"
     assert [call[0] for call in fake_client.calls] == [
         "initialize",
+        "session/prompt",
+    ]
+
+
+def test_executor_ensure_session_recreates_only_after_history_recovery_failure():
+    executor_module, executor, session, input_module = make_executor_and_session()
+    session.bind_backend_session("ses_history")
+    fake_client = FakeClient(
+        responses={
+            "initialize": {
+                "protocolVersion": 1,
+                "agentCapabilities": {"loadSession": True},
+            },
+            "session/new": {"sessionId": "ses_fresh"},
+            "session/prompt": {
+                "sessionId": "ses_fresh",
+                "stopReason": "end_turn",
+                "outputText": "fresh",
+            },
+        },
+        load_error=executor_module.ACPError(message="session missing"),
+    )
+    executor._client = fake_client
+
+    result = asyncio.run(
+        executor.run_prompt(
+            {"prompt": [{"type": "text", "text": "fresh"}]},
+            session,
+        )
+    )
+
+    assert result.ok is True
+    assert result.recovered_session is False
+    assert result.session_recovery_failed is True
+    assert session.backend_session_id == "ses_fresh"
+    assert session.backend_session_live is True
+    assert [call[0] for call in fake_client.calls] == [
+        "initialize",
+        "session/load",
         "session/new",
         "session/prompt",
     ]
