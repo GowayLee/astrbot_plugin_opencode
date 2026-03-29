@@ -173,6 +173,9 @@ class FakeSecurity:
     def is_destructive(self, text):
         return False
 
+    def evaluate_preflight(self, text):
+        return types.SimpleNamespace(requires_confirmation=False, reason="")
+
     def is_path_safe(self, path, session):
         return True
 
@@ -321,6 +324,56 @@ def make_plugin(tmp_path):
     plugin.context = FakeContext()
     plugin._send_file_list_cache = {}
     return main_module, session_module, plugin
+
+
+def test_migrate_config_fills_new_runtime_defaults(tmp_path):
+    main_module, session_module = load_modules()
+    plugin = main_module.OpenCodePlugin.__new__(main_module.OpenCodePlugin)
+    plugin.config = {"basic_config": {"confirm_all_write_ops": False}}
+
+    plugin._migrate_config()
+
+    basic_cfg = plugin.config["basic_config"]
+    assert basic_cfg["allow_file_writes"] is True
+    assert basic_cfg["backend_type"] == "acp_opencode"
+    assert basic_cfg["default_agent"] == "build"
+    assert basic_cfg["default_mode"] == "ask"
+    assert basic_cfg["acp_client_capabilities"]["terminal"] is True
+    assert plugin.config["tool_config"]["tool_description"]
+    assert plugin.config["output_config"]["output_modes"]
+
+
+def test_oc_handler_blocks_write_when_file_writes_disabled(tmp_path):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+
+    plugin.security.evaluate_preflight = lambda text: types.SimpleNamespace(
+        requires_confirmation=True,
+        reason="file_write_blocked",
+    )
+
+    outputs = asyncio.run(
+        collect(
+            plugin.oc_handler(FakeEvent(message_str="/oc 帮我写文件"), "帮我写文件")
+        )
+    )
+
+    assert outputs == ["❌ 当前已禁止文件写入操作"]
+    assert not plugin.executor.calls
+
+
+def test_call_opencode_tool_blocks_write_when_file_writes_disabled(tmp_path):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+    event = FakeEvent(message_str="/tool")
+
+    plugin.security.evaluate_preflight = lambda text: types.SimpleNamespace(
+        requires_confirmation=True,
+        reason="file_write_blocked",
+    )
+
+    asyncio.run(plugin.call_opencode_tool(event, "帮我写文件"))
+
+    assert plugin.executor.calls == []
+    assert event.sent == ["❌ 当前已禁止文件写入操作"]
 
 
 def test_oc_shell_handler_removed_from_plugin_surface(tmp_path):
@@ -488,6 +541,61 @@ def test_call_opencode_tool_uses_permission_flow_in_background(tmp_path):
     assert any(
         "工具执行完成" in str(message) for _, message in plugin.context.sent_messages
     )
+
+
+def test_oc_and_tool_share_common_execution_launcher(tmp_path):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+    calls = []
+
+    async def fake_prepare(event, task_description, *, empty_message):
+        session = plugin.session_mgr.get_or_create_session(event.get_sender_id())
+        return (
+            session,
+            {"contentBlocks": [{"type": "text", "text": task_description}]},
+            "",
+        )
+
+    async def fake_start(
+        event,
+        session,
+        prompt_payload,
+        *,
+        background,
+        emit_status,
+    ):
+        calls.append(
+            {
+                "sender": event.get_sender_id(),
+                "session": session,
+                "payload": prompt_payload,
+                "background": background,
+                "emit_status": emit_status,
+            }
+        )
+        if not background:
+            if False:
+                yield None
+            return
+
+    plugin._prepare_oc_execution = fake_prepare
+    plugin._start_oc_execution = fake_start
+
+    async def exercise():
+        chat_outputs = await collect(
+            plugin.oc_handler(FakeEvent(message_str="/oc 第一条"), "第一条")
+        )
+        await plugin.call_opencode_tool(FakeEvent(message_str="/tool"), "第二条")
+        return chat_outputs
+
+    outputs = asyncio.run(exercise())
+
+    assert outputs == []
+    assert len(calls) == 2
+    assert calls[0]["session"] is calls[1]["session"]
+    assert calls[0]["background"] is False
+    assert calls[1]["background"] is True
+    assert calls[0]["emit_status"] is True
+    assert calls[1]["emit_status"] is True
 
 
 def test_oc_handler_consumes_live_permission_updates_before_prompt_returns(tmp_path):

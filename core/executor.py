@@ -69,7 +69,7 @@ class CommandExecutor:
             startup_timeout = 0
 
         return {
-            "backend_type": str(basic_cfg.get("backend_type", "")).strip(),
+            "backend_type": str(basic_cfg.get("backend_type", "acp_opencode")).strip(),
             "acp_command": str(basic_cfg.get("acp_command", "")).strip(),
             "acp_args": [str(arg) for arg in acp_args],
             "acp_startup_timeout": startup_timeout,
@@ -101,9 +101,7 @@ class CommandExecutor:
 
     async def health_check(self) -> tuple[bool, str]:
         launch_cfg = self.get_acp_launch_config()
-        backend_type = launch_cfg["backend_type"]
-        if not backend_type:
-            return False, "backend_type_missing"
+        backend_type = launch_cfg["backend_type"] or "acp_opencode"
         if backend_type != "acp_opencode":
             return False, f"unsupported_backend_type({backend_type})"
 
@@ -468,7 +466,7 @@ class CommandExecutor:
                     )
                 except (ACPTransportError, ACPError) as exc:
                     stale_session_id = session.backend_session_id
-                    session.reset_live_session()
+                    session.drop_backend_session()
                     self.logger.warning(
                         f"ACP session recovery failed for {stale_session_id}: {exc}"
                     )
@@ -495,7 +493,7 @@ class CommandExecutor:
                 self._apply_session_state(session, response)
                 return SessionEnsureResult(ok=True, recovered_session=True)
 
-            session.reset_live_session()
+            session.drop_backend_session()
 
         created = await self._create_session(session)
         if not created.ok:

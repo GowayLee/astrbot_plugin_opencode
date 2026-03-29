@@ -39,6 +39,7 @@ class OpenCodePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        self._migrate_config()
         self.logger = logger
 
         # 基础数据目录（使用框架 API 获取，兼容不同部署环境）
@@ -59,6 +60,127 @@ class OpenCodePlugin(Star):
         self.session_mgr.set_record_workdir_callback(self.storage_mgr.record_workdir)
         self.storage_mgr.set_get_workdirs_callback(self.session_mgr.get_all_workdirs)
         self.security.set_load_history_callback(self.storage_mgr.load_workdir_history)
+
+    def _migrate_config(self):
+        """补齐新旧配置差异，确保运行时读取到完整默认值。"""
+        basic_cfg = self.config.setdefault("basic_config", {})
+
+        if (
+            "confirm_all_write_ops" in basic_cfg
+            and "allow_file_writes" not in basic_cfg
+        ):
+            basic_cfg["allow_file_writes"] = True
+
+        basic_cfg.setdefault("only_admin", True)
+        basic_cfg.setdefault("acp_command", "opencode")
+        basic_cfg.setdefault("acp_args", ["acp"])
+        basic_cfg.setdefault("acp_startup_timeout", 30)
+        basic_cfg.setdefault("work_dir", "")
+        basic_cfg.setdefault("proxy_url", "")
+        basic_cfg.setdefault("allow_file_writes", True)
+        basic_cfg.setdefault("auto_clean_interval", 60)
+        basic_cfg.setdefault("confirm_timeout", 30)
+
+        basic_cfg.setdefault("backend_type", "acp_opencode")
+        capabilities_default = {
+            "fs_read_text": True,
+            "fs_write_text": True,
+            "terminal": True,
+        }
+        existing_capabilities = basic_cfg.get("acp_client_capabilities")
+        if not isinstance(existing_capabilities, dict):
+            basic_cfg["acp_client_capabilities"] = dict(capabilities_default)
+        else:
+            for key, value in capabilities_default.items():
+                existing_capabilities.setdefault(key, value)
+
+        basic_cfg.setdefault("default_agent", "build")
+        basic_cfg.setdefault("default_mode", "ask")
+        if not isinstance(basic_cfg.get("default_config_options"), dict):
+            basic_cfg["default_config_options"] = {}
+
+        if "destructive_keywords" not in basic_cfg:
+            basic_cfg["destructive_keywords"] = [
+                "删除",
+                "格式化",
+                "清空",
+                "rm\\b",
+                "delete\\b",
+                "format\\b",
+                "wipe\\b",
+                "destroy\\b",
+                "shutdown\\b",
+                "reboot\\b",
+                "mkfs",
+                "dd\\b",
+                "> /dev/",
+            ]
+        basic_cfg.setdefault("check_path_safety", False)
+        basic_cfg.setdefault("confirm_all_write_ops", False)
+
+        tool_cfg = self.config.setdefault("tool_config", {})
+        tool_cfg.setdefault(
+            "tool_description",
+            "在用户电脑上调用 OpenCode 等 AI 智能体 Agent 的工具。当用户有执行编程、处理文档等复杂任务的高级需求时，调用此工具。",
+        )
+        tool_cfg.setdefault(
+            "arg_description",
+            "详细的任务描述。保持原意，允许适当编辑以提升精准度，也可以不修改。此参数会被传送给 OpenCode 作为输入。",
+        )
+
+        output_cfg = self.config.setdefault("output_config", {})
+        output_cfg.setdefault(
+            "output_modes", ["ai_summary", "txt_file", "long_image", "full_text"]
+        )
+        output_cfg.setdefault("max_text_length", 1000)
+        output_cfg.setdefault("merge_forward_enabled", False)
+        output_cfg.setdefault("smart_trigger_ai_summary", True)
+        output_cfg.setdefault("smart_trigger_txt_file", True)
+        output_cfg.setdefault("smart_trigger_long_image", True)
+
+    async def _check_and_confirm_destructive(
+        self,
+        event: AstrMessageEvent,
+        task: str,
+        timeout: int,
+        *,
+        prompt_text: str,
+        confirm_text: str,
+        timeout_text: str,
+        reject_text: str,
+    ) -> tuple[bool, Optional[str]]:
+        """统一处理前置安全检查和纯文本确认。"""
+        decision = self.security.evaluate_preflight(task)
+        if not decision.requires_confirmation:
+            return True, None
+        if decision.reason == "file_write_blocked":
+            return False, "file_write_blocked"
+
+        await event.send(event.plain_result(prompt_text))
+
+        user_choice = asyncio.Event()
+        approved = False
+
+        @session_waiter(timeout=timeout)
+        async def confirm(c: SessionController, e: AstrMessageEvent):
+            nonlocal approved
+            if e.message_str == confirm_text:
+                approved = True
+            user_choice.set()
+            c.stop()
+
+        try:
+            await confirm(event)
+            await user_choice.wait()
+        except TimeoutError:
+            await event.send(event.plain_result(timeout_text))
+            return False, decision.reason
+
+        if not approved:
+            await event.send(event.plain_result(reject_text))
+            return False, decision.reason
+
+        return True, decision.reason
 
     def _render_exec_status(self, session) -> str:
         """渲染执行中提示"""
@@ -365,6 +487,51 @@ class OpenCodePlugin(Star):
                 await asyncio.sleep(self.output_proc.next_send_delay())
             yield event.chain_result(components)
 
+    async def _prepare_oc_execution(
+        self,
+        event: AstrMessageEvent,
+        task_description: str,
+        *,
+        empty_message: str,
+    ):
+        session = self.session_mgr.get_or_create_session(event.get_sender_id())
+        prompt_payload = await self.input_proc.process_input_message(
+            event, session, task_description
+        )
+        if not prompt_payload:
+            return session, None, empty_message
+        return session, prompt_payload, ""
+
+    async def _start_oc_execution(
+        self,
+        event: AstrMessageEvent,
+        session,
+        prompt_payload: Any,
+        *,
+        background: bool,
+        emit_status: bool,
+    ):
+        if background:
+            if emit_status:
+                await event.send(event.plain_result(self._render_exec_status(session)))
+            asyncio.create_task(
+                self._execute_opencode_background(
+                    event.unified_msg_origin,
+                    prompt_payload,
+                    session,
+                    event,
+                )
+            )
+            return
+
+        async for result in self._run_oc_prompt(
+            event,
+            session,
+            prompt_payload,
+            emit_status=emit_status,
+        ):
+            yield result
+
     async def _prepare_history_session_bind(self, session) -> tuple[bool, str]:
         init_result = await self.executor.initialize_if_needed(session)
         if not init_result.ok:
@@ -666,56 +833,39 @@ class OpenCodePlugin(Star):
         parts = full_command.split(" ", 1)
         actual_message = parts[1].strip() if len(parts) > 1 else ""
 
-        sender_id = event.get_sender_id()
-        session = self.session_mgr.get_or_create_session(sender_id)
-
-        # 统一预处理：下载图片、处理引用、合并文本
-        final_message = await self.input_proc.process_input_message(
-            event, session, actual_message
+        session, final_message, empty_message = await self._prepare_oc_execution(
+            event,
+            actual_message,
+            empty_message="请输入任务、发送图片或引用消息。",
         )
-
         if not final_message:
-            yield event.plain_result("请输入任务、发送图片或引用消息。")
+            yield event.plain_result(empty_message)
             return
 
         # 获取超时配置
         timeout = self.config.get("basic_config", {}).get("confirm_timeout", 30)
 
-        if self.security.is_destructive(final_message):
-            yield event.plain_result(
-                f"⚠️ 敏感操作确认：'{final_message}'\n回复'确认'继续，其他取消 ({timeout}s)"
-            )
-
-            user_choice = asyncio.Event()
-            approved = False
-
-            @session_waiter(timeout=timeout)
-            async def confirm(c: SessionController, e: AstrMessageEvent):
-                nonlocal approved
-                if e.message_str == "确认":
-                    approved = True
-                    user_choice.set()
-                    c.stop()
-                else:
-                    user_choice.set()
-                    c.stop()
-
-            try:
-                await confirm(event)
-                await user_choice.wait()
-            except TimeoutError:
-                yield event.plain_result("超时取消")
-                return
-
-            if not approved:
-                yield event.plain_result("已取消")
-                return
-
-            async for result in self._run_oc_prompt(event, session, final_message):
-                yield result
+        approved, reason = await self._check_and_confirm_destructive(
+            event,
+            final_message,
+            timeout,
+            prompt_text=f"⚠️ 敏感操作确认：'{final_message}'\n回复'确认'继续，其他取消 ({timeout}s)",
+            confirm_text="确认",
+            timeout_text="超时取消",
+            reject_text="已取消",
+        )
+        if not approved:
+            if reason == "file_write_blocked":
+                yield event.plain_result("❌ 当前已禁止文件写入操作")
             return
 
-        async for result in self._run_oc_prompt(event, session, final_message):
+        async for result in self._start_oc_execution(
+            event,
+            session,
+            final_message,
+            background=False,
+            emit_status=True,
+        ):
             yield result
 
     @filter.command("oc-agent")
@@ -1109,64 +1259,45 @@ class OpenCodePlugin(Star):
             await event.send(event.plain_result("权限不足。"))
             return
 
-        sender_id = event.get_sender_id()
-        session = self.session_mgr.get_or_create_session(sender_id)
-
-        final_task = await self.input_proc.process_input_message(
-            event, session, task_description
+        session, final_task, empty_message = await self._prepare_oc_execution(
+            event,
+            task_description,
+            empty_message="请输入任务、发送图片或引用消息。",
         )
+        if not final_task:
+            await event.send(event.plain_result(empty_message))
+            return
 
-        # 敏感操作需要用户确认
-        if self.security.is_destructive(final_task):
-            timeout = self.config.get("basic_config", {}).get("confirm_timeout", 30)
-            await event.send(
-                event.plain_result(
-                    f"⚠️ AI 请求敏感操作：'{final_task}'\n回复'确认执行'批准 ({timeout}s)"
-                )
-            )
-
-            user_choice = asyncio.Event()
-            approved = False
-
-            @session_waiter(timeout=timeout)
-            async def tool_confirm(c: SessionController, e: AstrMessageEvent):
-                nonlocal approved
-                if e.message_str == "确认执行":
-                    approved = True
-                    user_choice.set()
-                    c.stop()
-                else:
-                    user_choice.set()
-                    c.stop()
-
-            try:
-                await tool_confirm(event)
-                await user_choice.wait()
-            except TimeoutError:
-                await event.send(event.plain_result("超时拒绝"))
+        timeout = self.config.get("basic_config", {}).get("confirm_timeout", 30)
+        approved, reason = await self._check_and_confirm_destructive(
+            event,
+            final_task,
+            timeout,
+            prompt_text=f"⚠️ AI 请求敏感操作：'{final_task}'\n回复'确认执行'批准 ({timeout}s)",
+            confirm_text="确认执行",
+            timeout_text="超时拒绝",
+            reject_text="拒绝执行",
+        )
+        if not approved:
+            if reason == "file_write_blocked":
+                await event.send(event.plain_result("❌ 当前已禁止文件写入操作"))
                 return
 
-            if not approved:
-                await event.send(event.plain_result("拒绝执行"))
-                return
-
-        # 发送"执行中"状态，然后在后台执行，避免框架 60s 超时
-        await event.send(event.plain_result(self._render_exec_status(session)))
-
-        # 保存主动推送所需的信息
-        umo = event.unified_msg_origin
-
-        # 启动后台任务执行 OpenCode
-        asyncio.create_task(
-            self._execute_opencode_background(umo, final_task, session, event)
-        )
+        async for _ in self._start_oc_execution(
+            event,
+            session,
+            final_task,
+            background=True,
+            emit_status=True,
+        ):
+            pass
 
         # 不 yield 任何内容，框架会认为工具已自行处理，AI 不再额外回复
 
     async def _execute_opencode_background(
         self,
         umo: str,
-        task: str,
+        prompt_payload: Any,
         session,
         event: AstrMessageEvent,
     ):
@@ -1175,7 +1306,7 @@ class OpenCodePlugin(Star):
 
         try:
             async for payload in self._run_oc_prompt(
-                event, session, task, emit_status=False
+                event, session, prompt_payload, emit_status=False
             ):
                 message_chain = MessageChain()
                 if isinstance(payload, list):

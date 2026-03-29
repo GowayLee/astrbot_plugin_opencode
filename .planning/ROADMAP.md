@@ -13,7 +13,7 @@
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: 配置收敛与兼容迁移** - 把面板收敛成管理员初始化配置，并保证升级后可平滑继续使用。
+- [x] **Phase 1: 配置收敛与兼容迁移** - 把面板收敛成管理员初始化配置，并保证升级后可平滑继续使用。
 - [ ] **Phase 2: 会话内核与生命周期统一** - 收敛会话延续、切换、重置与共享执行内核的状态边界。
 - [ ] **Phase 3: 直接聊天交互体验** - 让 slash-command 更像直接操控 Coding Agent，并具备即时反馈与过程感。
 - [ ] **Phase 4: Tool 回传与统一安全策略** - 让 tool 结果回到上层 Agent，并把高层安全策略统一落到两条入口。
@@ -48,7 +48,12 @@ Plans:
 2. 用户执行 `/oc-new`、`/oc-end`、`/oc-session` 后，会话创建、结束、切换的结果与提示保持一致且可预期。
 3. slash-command 与 tool 调用基于同一套执行内核运行，但不会出现会话状态串线或输出语义混淆。
 
-**Plans**: TBD
+**Plans:** 1/2 plans executed
+
+Plans:
+
+- [ ] 02-01-PLAN.md — 统一 slash-command 与 tool 的共享会话执行内核
+- [ ] 02-02-PLAN.md — 固化 /oc-new、/oc-end、/oc-session 的生命周期语义
 
 ### Phase 3: 直接聊天交互体验
 
@@ -85,9 +90,9 @@ Plans:
 **Execution Order:**
 Phases execute in numeric order: 1 → 2 → 3 → 4
 
-| Phase                      | Plans Complete | Status      | Completed |
-| -------------------------- | -------------- | ----------- | --------- |
-| 1. 配置收敛与兼容迁移      | 0/1            | Planned     | -         |
-| 2. 会话内核与生命周期统一  | 0/TBD          | Not started | -         |
-| 3. 直接聊天交互体验        | 0/TBD          | Not started | -         |
-| 4. Tool 回传与统一安全策略 | 0/TBD          | Not started | -         |
+| Phase                      | Plans Complete | Status      | Completed  |
+| -------------------------- | -------------- | ----------- | ---------- |
+| 1. 配置收敛与兼容迁移      | 1/1            | Implemented | 2026-03-29 |
+| 2. 会话内核与生命周期统一  | 1/2 | In Progress|  |
+| 3. 直接聊天交互体验        | 0/TBD          | Not started | -          |
+| 4. Tool 回传与统一安全策略 | 0/TBD          | Not started | -          |

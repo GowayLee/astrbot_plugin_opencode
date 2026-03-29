@@ -7,11 +7,11 @@
 
 ### Admin Configuration
 
-- [ ] **CONF-01**: 管理员可以在 AstrBot 配置面板中完成插件初始化，而不需要理解或填写底层 ACP 协议字段
-- [ ] **CONF-02**: 管理员可以配置本地 ACP 启动命令、少量启动参数和启动超时
-- [ ] **CONF-03**: 管理员可以配置默认工作目录，作为新会话的默认执行上下文
-- [ ] **CONF-04**: 管理员可以通过单一开关控制插件是否允许文件写入类操作
-- [ ] **CONF-05**: 已有安装在升级到新配置结构后，不需要手工修补大量旧字段即可继续使用插件
+- [x] **CONF-01**: 管理员可以在 AstrBot 配置面板中完成插件初始化，而不需要理解或填写底层 ACP 协议字段
+- [x] **CONF-02**: 管理员可以配置本地 ACP 启动命令、少量启动参数和启动超时
+- [x] **CONF-03**: 管理员可以配置默认工作目录，作为新会话的默认执行上下文
+- [x] **CONF-04**: 管理员可以通过单一开关控制插件是否允许文件写入类操作
+- [x] **CONF-05**: 已有安装在升级到新配置结构后，不需要手工修补大量旧字段即可继续使用插件
 
 ### Direct Chat UX
 
@@ -29,9 +29,9 @@
 
 ### Session And State
 
-- [ ] **SESS-01**: 用户在同一聊天身份下连续发起任务时，可以延续同一底层 ACP 会话，而不会意外丢失上下文
+- [x] **SESS-01**: 用户在同一聊天身份下连续发起任务时，可以延续同一底层 ACP 会话，而不会意外丢失上下文
 - [ ] **SESS-02**: 用户在执行 `/oc-new`、`/oc-end`、`/oc-session` 等生命周期命令后，可以得到一致且可预期的会话行为
-- [ ] **SESS-03**: slash-command 与 tool 调用可以复用同一套执行内核，但不会混淆彼此的输出语义或状态流
+- [x] **SESS-03**: slash-command 与 tool 调用可以复用同一套执行内核，但不会混淆彼此的输出语义或状态流
 
 ### Safety And Permissions
 
@@ -71,11 +71,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase   | Status  |
 | ----------- | ------- | ------- |
-| CONF-01     | Phase 1 | Pending |
-| CONF-02     | Phase 1 | Pending |
-| CONF-03     | Phase 1 | Pending |
-| CONF-04     | Phase 1 | Pending |
-| CONF-05     | Phase 1 | Pending |
+| CONF-01     | Phase 1 | Done    |
+| CONF-02     | Phase 1 | Done    |
+| CONF-03     | Phase 1 | Done    |
+| CONF-04     | Phase 1 | Done    |
+| CONF-05     | Phase 1 | Done    |
 | CHAT-01     | Phase 3 | Pending |
 | CHAT-02     | Phase 3 | Pending |
 | CHAT-03     | Phase 3 | Pending |
@@ -84,9 +84,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TOOL-01     | Phase 4 | Pending |
 | TOOL-02     | Phase 4 | Pending |
 | TOOL-03     | Phase 4 | Pending |
-| SESS-01     | Phase 2 | Pending |
+| SESS-01     | Phase 2 | Complete |
 | SESS-02     | Phase 2 | Pending |
-| SESS-03     | Phase 2 | Pending |
+| SESS-03     | Phase 2 | Complete |
 | SAFE-01     | Phase 4 | Pending |
 | SAFE-02     | Phase 3 | Pending |
 | SAFE-03     | Phase 4 | Pending |

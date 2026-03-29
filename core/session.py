@@ -33,6 +33,21 @@ class OpenCodeSession:
 
         self.reset_live_session()
 
+    def _reset_runtime_state(self):
+        """清空仅属于当前 live runtime 的派生状态。"""
+        self.protocol_version: Optional[Any] = None
+        self.agent_name: Optional[str] = None
+        self.agent_title: Optional[str] = None
+        self.available_agents: list[dict] = []
+        self.current_mode_id: Optional[str] = None
+        self.config_options: list[dict] = []
+        self.current_config_values: dict = {}
+        self.available_modes: list[dict] = []
+        self.available_commands: list[dict] = []
+        self.session_capabilities: dict = {}
+        self.pending_permission: Optional[dict] = None
+        self.prompt_running = False
+
     @property
     def opencode_session_id(self) -> Optional[str]:
         return self.backend_session_id
@@ -49,26 +64,19 @@ class OpenCodeSession:
         """清除后端 session ID"""
         self.backend_session_id = None
 
+    def drop_backend_session(self):
+        """丢弃当前后端绑定及其 live 状态，但保留工作目录和默认偏好。"""
+        self.backend_session_id = None
+        self._reset_runtime_state()
+
     def bind_backend_session(self, session_id: str):
         """绑定历史会话，并清理旧的 live 状态"""
-        self.reset_live_session()
+        self._reset_runtime_state()
         self.backend_session_id = session_id
 
     def reset_live_session(self):
         """清空当前 live 会话状态，但保留默认偏好和工作目录"""
-        self.backend_session_id: Optional[str] = None
-        self.protocol_version: Optional[Any] = None
-        self.agent_name: Optional[str] = None
-        self.agent_title: Optional[str] = None
-        self.available_agents: list[dict] = []
-        self.current_mode_id: Optional[str] = None
-        self.config_options: list[dict] = []
-        self.current_config_values: dict = {}
-        self.available_modes: list[dict] = []
-        self.available_commands: list[dict] = []
-        self.session_capabilities: dict = {}
-        self.pending_permission: Optional[dict] = None
-        self.prompt_running = False
+        self.drop_backend_session()
 
     def set_pending_permission(self, permission: Optional[dict]):
         """记录当前等待用户确认的权限请求。"""
@@ -193,8 +201,8 @@ class SessionManager:
             work_dir=work_dir,
             env=self._build_env("new-session"),
             backend_kind=basic_cfg.get("backend_type"),
-            default_agent=basic_cfg.get("default_agent"),
-            default_mode=basic_cfg.get("default_mode"),
+            default_agent=basic_cfg.get("default_agent") or "build",
+            default_mode=basic_cfg.get("default_mode") or "ask",
             default_config_options=basic_cfg.get("default_config_options") or {},
         )
 
