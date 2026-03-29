@@ -31,7 +31,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 2. 管理员可以直接设置本地 ACP 启动命令、少量启动参数、启动超时、默认工作目录和文件写入开关。
 3. 已安装实例升级到新配置结构后，仍可在不手工补齐大量旧字段的前提下继续使用核心能力。
 
-**Plans**: TBD
+**Plans:** 1 plan
+
+Plans:
+
+- [ ] 01-01-PLAN.md — 重设计配置面板 + 实现迁移与消费端适配
 
 ### Phase 2: 会话内核与生命周期统一
 
@@ -83,7 +87,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase                      | Plans Complete | Status      | Completed |
 | -------------------------- | -------------- | ----------- | --------- |
-| 1. 配置收敛与兼容迁移      | 0/TBD          | Not started | -         |
+| 1. 配置收敛与兼容迁移      | 0/1            | Planned     | -         |
 | 2. 会话内核与生命周期统一  | 0/TBD          | Not started | -         |
 | 3. 直接聊天交互体验        | 0/TBD          | Not started | -         |
 | 4. Tool 回传与统一安全策略 | 0/TBD          | Not started | -         |
