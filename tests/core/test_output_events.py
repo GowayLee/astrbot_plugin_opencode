@@ -172,9 +172,12 @@ def test_permission_event_interrupts_normal_progress_output():
 
     assert updates[0].startswith("🚀")
     assert any("编辑文件" in item for item in updates)
-    assert updates[-1].startswith("⚠️ 权限确认")
+    assert updates[-1].startswith("⚠️ 权限确认\n")
+    assert "操作: write_file (edit)" in updates[-1]
+    assert "目标: core/output.py" in updates[-1]
+    assert "1. 允许一次" in updates[-1]
     assert "allow_once" not in updates[-1]
-    assert "sandbox.bypass + 跳过沙箱" in updates[-1]
+    assert "2. sandbox.bypass + 跳过沙箱" in updates[-1]
     assert session.pending_permission is not None
 
 
@@ -289,7 +292,7 @@ def test_parse_output_plan_executes_embedded_acp_event_folding_for_runtime_path(
     assert session.pending_permission is None
     assert (
         extract_plain_text(send_plan)
-        == "🚀 开始执行任务\n⚠️ 权限确认: write_file | 类型: edit | 目标: core/output.py | 选项: 1.允许一次"
+        == "🚀 开始执行任务\n⚠️ 权限确认\n操作: write_file (edit)\n目标: core/output.py\n1. 允许一次"
     )
 
 

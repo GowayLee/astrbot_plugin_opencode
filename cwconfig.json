@@ -1,0 +1,11 @@
+{
+  "indexing": {
+    "includePatterns": [
+      "core/**",
+      "main.py"
+    ],
+    "ignorePatterns": [
+      "AGENTS.md"
+    ]
+  }
+}

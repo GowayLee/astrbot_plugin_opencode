@@ -35,6 +35,8 @@ PLUGIN_AUTHOR = "Hauryn Lee"
 PLUGIN_DESCRIPTION = "让 AstrBot 通过 ACP 会话对接 OpenCode 等智能体，在聊天中完成编程与文件任务。使用此插件，意味着你已知晓相关风险。"
 PLUGIN_VERSION = "1.3.1"
 PLUGIN_REPO = "https://github.com/GowayLee/astrbot_plugin_opencode"
+STREAM_MESSAGE_FLUSH_CHARS = 120
+STREAM_MESSAGE_FLUSH_INTERVAL = 1.2
 
 
 @register(
@@ -255,7 +257,16 @@ class OpenCodePlugin(Star):
             lines.append(f"🌐 代理环境: {session.env.get('http_proxy', '无')}")
         if extra_lines:
             lines.extend(extra_lines)
-        lines.extend(self._render_live_state_lines(session, include_defaults=True))
+        lines.extend(
+            [
+                f"🤖 当前 agent: {session.agent_name or '未提供'}",
+                f"🎛️ 当前 mode: {session.current_mode_id or '未提供'}",
+            ]
+        )
+        if session.backend_session_id:
+            lines.append(f"🔗 当前会话: {session.backend_session_id}")
+        else:
+            lines.append("🔗 当前会话: 未绑定")
         return "\n".join(lines)
 
     def _get_mode_options(self, session) -> tuple[str, list[dict[str, Any]]]:
@@ -380,6 +391,18 @@ class OpenCodePlugin(Star):
                     return item
         return None
 
+    def _extract_runtime_chunk_text(self, event_payload: dict[str, Any]) -> str:
+        for key in ("text", "chunk", "content", "delta", "detail", "message"):
+            value = event_payload.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return ""
+
+    def _render_short_help(self, problem: str, examples: list[str]) -> str:
+        lines = [problem, "示例:"]
+        lines.extend(examples[:2])
+        return "\n".join(lines)
+
     def _map_permission_reply(self, reply_text: str, permission: dict) -> Optional[str]:
         text = (reply_text or "").strip()
         if not text:
@@ -448,6 +471,20 @@ class OpenCodePlugin(Star):
         output = None
         stream = None
         used_live_stream = False
+        streamed_text_parts: list[str] = []
+        chunk_buffer: list[str] = []
+        loop = asyncio.get_running_loop()
+        chunk_buffer_started_at: Optional[float] = None
+
+        def flush_chunk_buffer() -> Optional[str]:
+            nonlocal chunk_buffer_started_at
+            if not chunk_buffer:
+                return None
+            merged = "".join(chunk_buffer)
+            chunk_buffer.clear()
+            chunk_buffer_started_at = None
+            streamed_text_parts.append(merged)
+            return merged
 
         if hasattr(self.executor, "stream_prompt"):
             stream = self.executor.stream_prompt(prompt_payload, session)
@@ -461,10 +498,35 @@ class OpenCodePlugin(Star):
 
                 kind = str(item.get("kind") or "").strip()
                 if kind == "event":
+                    runtime_event = item.get("event") or {}
+                    event_type = str(runtime_event.get("type") or "").strip()
+                    if event_type == "message_chunk":
+                        chunk_text = self._extract_runtime_chunk_text(runtime_event)
+                        if chunk_text:
+                            if chunk_buffer_started_at is None:
+                                chunk_buffer_started_at = loop.time()
+                            chunk_buffer.append(chunk_text)
+                            should_flush = (
+                                sum(len(part) for part in chunk_buffer)
+                                >= STREAM_MESSAGE_FLUSH_CHARS
+                                or "\n" in chunk_text
+                                or loop.time() - chunk_buffer_started_at
+                                >= STREAM_MESSAGE_FLUSH_INTERVAL
+                            )
+                            if should_flush:
+                                merged_chunk = flush_chunk_buffer()
+                                if merged_chunk:
+                                    yield event.plain_result(merged_chunk)
+                        continue
+
+                    merged_chunk = flush_chunk_buffer()
+                    if merged_chunk:
+                        yield event.plain_result(merged_chunk)
+
                     updates = []
                     if hasattr(self.output_proc, "build_chat_updates"):
                         updates = self.output_proc.build_chat_updates(
-                            [item.get("event") or {}], session=session
+                            [runtime_event], session=session
                         )
                     for update in updates:
                         if update:
@@ -476,7 +538,7 @@ class OpenCodePlugin(Star):
                             event, session
                         )
                         if timed_out:
-                            yield event.plain_result("⏱️ 已因超时取消本次授权请求")
+                            yield event.plain_result("已因超时取消本次授权请求")
                         if hasattr(self.executor, "stream_permission_response"):
                             next_stream = self.executor.stream_permission_response(
                                 session,
@@ -503,6 +565,17 @@ class OpenCodePlugin(Star):
         if output is None:
             output = await self.executor.run_prompt(prompt_payload, session)
 
+        merged_chunk = flush_chunk_buffer()
+        if merged_chunk:
+            yield event.plain_result(merged_chunk)
+
+        payload = getattr(output, "payload", None)
+        if isinstance(payload, dict):
+            if streamed_text_parts:
+                payload["_astrbot_streamed_text"] = "".join(streamed_text_parts)
+            if used_live_stream:
+                payload["_astrbot_live_stream"] = True
+
         while True:
             permission_message = self._extract_permission_update(output, session)
             if not permission_message or not session.pending_permission:
@@ -513,7 +586,7 @@ class OpenCodePlugin(Star):
                 event, session
             )
             if timed_out:
-                yield event.plain_result("⏱️ 已因超时取消本次授权请求")
+                yield event.plain_result("已因超时取消本次授权请求")
             output = await self.executor.respond_permission(
                 session,
                 request_id=str(session.pending_permission.get("requestId") or ""),
@@ -903,11 +976,28 @@ class OpenCodePlugin(Star):
         full_command = event.message_str.strip()
         parts = full_command.split(" ", 1)
         actual_message = parts[1].strip() if len(parts) > 1 else ""
+        if not actual_message:
+            yield event.plain_result(
+                self._render_short_help(
+                    "❌ 未收到任务内容",
+                    [
+                        "/oc 帮我总结当前目录结构",
+                        "/oc 参考我刚发的图片继续排查",
+                    ],
+                )
+            )
+            return
 
         session, final_message, empty_message = await self._prepare_oc_execution(
             event,
             actual_message,
-            empty_message="请输入任务、发送图片或引用消息。",
+            empty_message=self._render_short_help(
+                "❌ 未收到任务内容",
+                [
+                    "/oc 帮我总结当前目录结构",
+                    "/oc 参考我刚发的图片继续排查",
+                ],
+            ),
         )
         if not final_message:
             yield event.plain_result(empty_message)
@@ -989,7 +1079,10 @@ class OpenCodePlugin(Star):
 
         if not selected:
             yield event.plain_result(
-                f"❌ 未找到可用 mode：{mode_value}\n{self._render_mode_overview(session)}"
+                self._render_short_help(
+                    f"❌ 未找到可用 mode：{mode_value}",
+                    ["/oc-mode", "/oc-mode code"],
+                )
             )
             return
 
@@ -1089,12 +1182,18 @@ class OpenCodePlugin(Star):
             if all_errors:
                 lines = "\n".join([f"- {msg}" for msg in all_errors[:20]])
                 yield event.plain_result(
-                    "❌ 没有可发送的有效文件：\n"
-                    f"{lines}\n\n"
-                    "提示：先执行 /oc-send 查看编号，或改用明确的相对/绝对路径。"
+                    self._render_short_help(
+                        f"❌ 没有可发送的有效文件：\n{lines}",
+                        ["/oc-send", "/oc-send 1,2"],
+                    )
                 )
             else:
-                yield event.plain_result("❌ 没有可发送的有效文件。")
+                yield event.plain_result(
+                    self._render_short_help(
+                        "❌ 没有可发送的有效文件",
+                        ["/oc-send", "/oc-send 1,2"],
+                    )
+                )
             return
 
         try:
@@ -1192,7 +1291,6 @@ class OpenCodePlugin(Star):
         return self._render_lifecycle_status(
             session,
             "✅ 已重置当前 ACP 会话绑定",
-            include_proxy=True,
         )
 
     @filter.command("oc-end")
@@ -1285,14 +1383,21 @@ class OpenCodePlugin(Star):
                     title = title[:37] + "..."
                 lines.append(f"{index}. {title}")
                 lines.append(f"   ID: {item['id']}")
-            lines.extend(self._render_live_state_lines(session, include_defaults=True))
+            lines.extend(
+                self._render_lifecycle_status(session, "📍 当前绑定状态").splitlines()[
+                    1:
+                ]
+            )
             yield event.plain_result("\n".join(lines))
             return
 
         target_session = self._match_backend_session(sessions, query)
         if not target_session:
             yield event.plain_result(
-                f"❌ 未找到匹配的会话：{query}\n请先使用 /oc-session 查看列表。"
+                self._render_short_help(
+                    f"❌ 未找到匹配的会话：{query}",
+                    ["/oc-session", "/oc-session 2"],
+                )
             )
             return
 

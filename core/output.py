@@ -171,6 +171,8 @@ class OutputProcessor:
             or ""
         ).strip()
         detail = str(payload.get("detail") or payload.get("message") or "").strip()
+        if not detail:
+            detail = str(payload.get("text") or payload.get("chunk") or "").strip()
         session_id = payload.get("sessionId") or payload.get("session_id")
 
         return ACPNormalizedEvent(
@@ -188,13 +190,28 @@ class OutputProcessor:
     ) -> list[str]:
         """将 ACP 事件折叠成聊天侧简洁进度提示。"""
         updates: list[str] = []
+        chunk_parts: list[str] = []
+
+        def flush_chunks() -> None:
+            if not chunk_parts:
+                return
+            updates.append("".join(chunk_parts))
+            chunk_parts.clear()
 
         for item in events:
             event = self.normalize_acp_event(item)
+            if event.event_type == "message_chunk":
+                chunk_text = self._extract_message_chunk_text(event)
+                if chunk_text:
+                    chunk_parts.append(chunk_text)
+                continue
+
+            flush_chunks()
             message = self._build_chat_update(event, session)
             if message:
                 updates.append(message)
 
+        flush_chunks()
         return updates
 
     def _build_chat_update(
@@ -212,9 +229,6 @@ class OutputProcessor:
                 event.detail or event.title or self._extract_plan_summary(event.data)
             )
             return f"📝 计划更新: {summary}" if summary else "📝 计划已更新"
-
-        if event_type == "message_chunk":
-            return ""
 
         if event_type == "tool_started":
             return self._format_tool_update("🛠️", event)
@@ -279,6 +293,14 @@ class OutputProcessor:
         )
         final_text = getattr(result, "final_text", "") or ""
         message = getattr(result, "message", "") or ""
+        streamed_text = self._extract_streamed_text(
+            result, self._extract_embedded_events(result)
+        )
+        live_stream_used = bool(
+            getattr(result, "payload", {}).get("_astrbot_live_stream")
+            if isinstance(getattr(result, "payload", None), dict)
+            else False
+        )
 
         self._finalize_terminal_session_state(session, stop_reason)
 
@@ -293,6 +315,12 @@ class OutputProcessor:
             return prefix_plan + [[Plain("🚫 当前请求被拒绝")]]
 
         if final_text.strip():
+            if self._texts_equivalent(final_text, streamed_text):
+                if prefix_plan:
+                    return prefix_plan
+                if live_stream_used:
+                    return []
+                return [[Plain("✅ 执行完成")]]
             return prefix_plan + await self.parse_output_plan(
                 final_text, event, session
             )
@@ -309,6 +337,14 @@ class OutputProcessor:
         title = event.title or "工具执行"
         detail = event.detail or self._extract_tool_detail(event.data)
         return f"{prefix} {title}: {detail}" if detail else f"{prefix} {title}"
+
+    def _extract_message_chunk_text(self, event: ACPNormalizedEvent) -> str:
+        payload = event.data
+        for key in ("text", "chunk", "content", "delta", "detail", "message"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return event.detail or ""
 
     def _extract_plan_summary(self, payload: dict[str, Any]) -> str:
         plan = payload.get("plan") or payload.get("steps") or []
@@ -369,20 +405,18 @@ class OutputProcessor:
         arguments = permission_payload.get("arguments") or {}
         detail = self._extract_tool_detail(arguments)
         options = permission_payload.get("options") or []
-        option_text = " ".join(
-            f"{item['index']}.{item['display']}"
-            for item in options
-            if item.get("display")
-        )
-
-        parts = [f"⚠️ 权限确认: {tool_name}"]
-        if tool_kind:
-            parts.append(f"类型: {tool_kind}")
-        if detail:
-            parts.append(f"目标: {detail}")
-        if option_text:
-            parts.append(f"选项: {option_text}")
-        return " | ".join(parts)
+        action_text = f"{tool_name} ({tool_kind})" if tool_kind else tool_name
+        lines = [
+            "⚠️ 权限确认",
+            f"操作: {action_text}",
+            f"目标: {detail or '未提供'}",
+        ]
+        for item in options:
+            display = str(item.get("display") or "").strip()
+            index = item.get("index")
+            if display and index is not None:
+                lines.append(f"{index}. {display}")
+        return "\n".join(lines)
 
     def _extract_embedded_events(self, result: Any) -> list[Any]:
         payload = getattr(result, "payload", {}) or {}
@@ -397,6 +431,28 @@ class OutputProcessor:
             return list(items)
 
         return []
+
+    def _extract_streamed_text(self, result: Any, embedded_events: list[Any]) -> str:
+        payload = getattr(result, "payload", {}) or {}
+        if isinstance(payload, dict):
+            streamed_text = payload.get("_astrbot_streamed_text")
+            if isinstance(streamed_text, str) and streamed_text:
+                return streamed_text
+
+        text_parts: list[str] = []
+        for item in embedded_events:
+            event = self.normalize_acp_event(item)
+            if event.event_type != "message_chunk":
+                continue
+            chunk_text = self._extract_message_chunk_text(event)
+            if chunk_text:
+                text_parts.append(chunk_text)
+        return "".join(text_parts)
+
+    def _texts_equivalent(self, left: str, right: str) -> bool:
+        if not left or not right:
+            return False
+        return left.strip() == right.strip()
 
     def _build_update_plan(self, updates: list[str]) -> List[List]:
         if not updates:

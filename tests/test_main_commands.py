@@ -201,6 +201,12 @@ class FakeInputProcessor:
 class FakeOutputProcessor:
     async def parse_output_plan(self, output, event, session):
         text = getattr(output, "final_text", "") or getattr(output, "message", "")
+        payload = getattr(output, "payload", {}) or {}
+        streamed_text = (
+            payload.get("_astrbot_streamed_text") if isinstance(payload, dict) else ""
+        )
+        if text and streamed_text and text.strip() == streamed_text.strip():
+            return []
         return [[[text]]]
 
     def next_send_delay(self):
@@ -212,7 +218,20 @@ class FakeOutputProcessor:
     def build_chat_updates(self, events, session=None):
         updates = []
         for event in events:
-            if event.get("type") == "permission_requested":
+            event_type = event.get("type")
+            if event_type == "message_chunk":
+                text = event.get("text") or event.get("detail") or ""
+                if text:
+                    updates.append(text)
+            elif event_type == "run_started":
+                updates.append("🚀 开始执行任务")
+            elif event_type == "tool_started":
+                title = event.get("title") or "工具执行"
+                detail = event.get("detail") or ""
+                updates.append(f"🛠️ {title}: {detail}" if detail else f"🛠️ {title}")
+            elif event_type == "run_finished":
+                updates.append("✅ 执行完成")
+            elif event_type == "permission_requested":
                 if session is not None:
                     session.set_pending_permission(event.get("permission"))
                 updates.append("⚠️ 权限确认: write_file")
@@ -402,6 +421,17 @@ def test_oc_handler_blocks_write_when_file_writes_disabled(tmp_path):
     assert not plugin.executor.calls
 
 
+def test_oc_handler_without_message_returns_short_help_examples(tmp_path):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+
+    outputs = asyncio.run(collect(plugin.oc_handler(FakeEvent(message_str="/oc"), "")))
+
+    assert any("未收到任务内容" in output for output in outputs)
+    assert any("示例:" in output for output in outputs)
+    assert any("/oc 帮我总结当前目录结构" in output for output in outputs)
+    assert any("/oc 参考我刚发的图片继续排查" in output for output in outputs)
+
+
 def test_call_opencode_tool_blocks_write_when_file_writes_disabled(tmp_path):
     main_module, session_module, plugin = make_plugin(tmp_path)
     event = FakeEvent(message_str="/tool")
@@ -534,6 +564,21 @@ def test_oc_session_reports_load_failure_without_leaving_fake_bound_session(tmp_
     assert any("绑定历史会话失败" in output for output in outputs)
     assert any("当前会话: 未绑定" in output for output in outputs)
     assert any(str(tmp_path) in output for output in outputs)
+
+
+def test_permission_reply_mapping_supports_numbers_keywords_and_option_ids(tmp_path):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+    permission = {
+        "options": [
+            {"optionId": "allow_once", "label": "允许一次"},
+            {"optionId": "reject_once", "label": "拒绝一次"},
+        ]
+    }
+
+    assert plugin._map_permission_reply("1", permission) == "allow_once"
+    assert plugin._map_permission_reply("拒绝", permission) == "reject_once"
+    assert plugin._map_permission_reply("reject_once", permission) == "reject_once"
+    assert plugin._map_permission_reply("", permission) is None
 
 
 def test_call_opencode_tool_uses_permission_flow_in_background(tmp_path):
@@ -686,6 +731,44 @@ def test_oc_handler_consumes_live_permission_updates_before_prompt_returns(tmp_p
     assert any("直播权限后完成" in str(output) for output in outputs)
 
 
+def test_oc_handler_merges_streamed_message_chunks_and_avoids_repeating_final_text(
+    tmp_path,
+):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+    plugin.executor.stream_prompt_items = [
+        {"kind": "event", "event": {"type": "run_started"}},
+        {"kind": "event", "event": {"type": "message_chunk", "text": "第一段"}},
+        {"kind": "event", "event": {"type": "message_chunk", "text": "，第二段"}},
+        {
+            "kind": "event",
+            "event": {
+                "type": "tool_started",
+                "title": "读取文件",
+                "detail": "README.md",
+            },
+        },
+        {"kind": "event", "event": {"type": "run_finished", "stopReason": "end_turn"}},
+        {
+            "kind": "result",
+            "result": FakeExecutionResult(
+                final_text="第一段，第二段",
+                payload={},
+            ),
+        },
+    ]
+
+    outputs = asyncio.run(
+        collect(plugin.oc_handler(FakeEvent(message_str="/oc 帮我总结"), "帮我总结"))
+    )
+
+    assert outputs[0].startswith("🚀 执行中")
+    assert "🚀 开始执行任务" in outputs[1]
+    assert "第一段，第二段" in outputs[2]
+    assert outputs.count("第一段，第二段") == 1
+    assert "🛠️ 读取文件: README.md" in outputs[3]
+    assert "✅ 执行完成" in outputs[4]
+
+
 def test_oc_mode_lists_config_options_before_legacy_modes(tmp_path):
     main_module, session_module, plugin = make_plugin(tmp_path)
     session = plugin.session_mgr.get_or_create_session(
@@ -729,6 +812,27 @@ def test_oc_mode_setting_updates_live_session_and_defaults(tmp_path):
     assert any("当前模式" in output or "mode" in output.lower() for output in outputs)
 
 
+def test_oc_mode_unknown_value_returns_short_help_examples(tmp_path):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+    session = plugin.session_mgr.get_or_create_session(
+        "alice", custom_work_dir=str(tmp_path)
+    )
+    session.config_options = [
+        {"id": "mode.ask", "category": "mode", "name": "ask", "value": "ask"},
+        {"id": "mode.code", "category": "mode", "name": "code", "value": "code"},
+    ]
+
+    outputs = asyncio.run(
+        collect(plugin.oc_mode(FakeEvent(message_str="/oc-mode unknown"), "unknown"))
+    )
+
+    rendered = "\n".join(outputs)
+    assert "未找到可用 mode" in rendered
+    assert "示例:" in rendered
+    assert "/oc-mode" in rendered
+    assert "/oc-mode code" in rendered
+
+
 def test_oc_session_lists_and_binds_backend_sessions(tmp_path):
     main_module, session_module, plugin = make_plugin(tmp_path)
     session = plugin.session_mgr.get_or_create_session(
@@ -751,6 +855,61 @@ def test_oc_session_lists_and_binds_backend_sessions(tmp_path):
     assert "ses_1" in "\n".join(list_outputs)
     assert session.backend_session_id == "ses_2"
     assert any("已绑定" in output or "已切换" in output for output in bind_outputs)
+
+
+def test_oc_session_unknown_target_returns_short_help_examples(tmp_path):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+    plugin.executor.sessions_result = FakeExecutionResult(
+        items=[{"sessionId": "ses_1", "title": "第一条"}]
+    )
+
+    outputs = asyncio.run(
+        collect(
+            plugin.oc_session(FakeEvent(message_str="/oc-session missing"), "missing")
+        )
+    )
+
+    rendered = "\n".join(outputs)
+    assert "未找到匹配的会话" in rendered
+    assert "示例:" in rendered
+    assert "/oc-session" in rendered
+    assert "/oc-session 2" in rendered
+
+
+def test_lifecycle_outputs_prefer_summary_fields_without_defaults_or_proxy(tmp_path):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+    session = plugin.session_mgr.get_or_create_session(
+        "alice", custom_work_dir=str(tmp_path)
+    )
+    session.backend_session_id = "ses_live"
+    session.agent_name = "plan"
+    session.current_mode_id = "code"
+    session.default_agent = "build"
+    session.default_mode = "ask"
+    session.env["http_proxy"] = "http://proxy.local"
+
+    oc_end_outputs = asyncio.run(
+        collect(plugin.oc_end(FakeEvent(message_str="/oc-end")))
+    )
+    session.backend_session_id = "ses_new"
+    oc_new_outputs = asyncio.run(
+        collect(plugin.oc_new(FakeEvent(message_str="/oc-new"), ""))
+    )
+    plugin.executor.sessions_result = FakeExecutionResult(
+        items=[{"sessionId": "ses_1", "title": "第一条"}]
+    )
+    oc_session_outputs = asyncio.run(
+        collect(plugin.oc_session(FakeEvent(message_str="/oc-session"), ""))
+    )
+
+    rendered = "\n".join(oc_end_outputs + oc_new_outputs + oc_session_outputs)
+    assert "工作目录" in rendered
+    assert "当前会话" in rendered
+    assert "当前 agent" in rendered
+    assert "当前 mode" in rendered
+    assert "默认 agent" not in rendered
+    assert "默认 mode" not in rendered
+    assert "代理环境" not in rendered
 
 
 def test_oc_session_syncs_sender_workdir_after_history_bind_success(tmp_path):
@@ -907,3 +1066,20 @@ def test_oc_new_rejects_missing_directory_and_falls_back_to_default_workdir(tmp_
     assert session.work_dir == str(tmp_path / "default")
     assert session.backend_session_id is None
     assert session.default_agent == "plan"
+
+
+def test_oc_send_invalid_targets_returns_short_help_examples(tmp_path):
+    main_module, session_module, plugin = make_plugin(tmp_path)
+    session = plugin.session_mgr.get_or_create_session(
+        "alice", custom_work_dir=str(tmp_path)
+    )
+
+    outputs = asyncio.run(
+        collect(plugin.oc_send(FakeEvent(message_str="/oc-send 99"), "99"))
+    )
+
+    rendered = "\n".join(str(output) for output in outputs)
+    assert "没有可发送的有效文件" in rendered
+    assert "示例:" in rendered
+    assert "/oc-send" in rendered
+    assert "/oc-send 1,2" in rendered
